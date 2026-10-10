@@ -1,0 +1,5379 @@
+MINIMAL ARCH -> DWL FIELD GUIDE
+================================
+A minimal, source-driven Arch Linux workstation built to teach the Linux stack.
+
+Snapshot date: 2026-10-04
+
+TARGET MACHINE / KNOWN HARDWARE
+-------------------------------
+This guide is written for the machine already inspected during the first-boot
+health check:
+
+    CPU:
+        AMD
+
+    GPU:
+        NVIDIA GeForce RTX 3060 (Ampere)
+
+    Network:
+        Realtek wired Ethernet
+
+    Boot:
+        UEFI
+        systemd-boot
+
+    Root filesystem:
+        ext4
+
+If you reuse this guide on another machine, DO NOT blindly reuse the NVIDIA,
+firmware, disk-device, or network-interface choices.
+
+FINAL STACK
+-----------
+The intentionally small final stack in this guide is:
+
+    Linux kernel
+        |
+        +-- systemd
+        |    +-- systemd-boot
+        |    +-- systemd-logind
+        |    +-- systemd-networkd
+        |    +-- systemd-resolved
+        |    `-- systemd-timesyncd
+        |
+        +-- pacman
+        |
+        +-- Bash
+        |
+        +-- Git + OpenSSH
+        |
+        +-- tmux
+        |
+        +-- Neovim
+        |
+        +-- NVIDIA open kernel driver
+        |    +-- nvidia-open
+        |    `-- nvidia-utils
+        |
+        +-- Wayland / wlroots
+        |
+        +-- dwl
+        |    `-- configured by config.h + recompilation
+        |
+        +-- foot
+        |
+        +-- fnott
+        |
+        +-- wl-clipboard
+        |
+        +-- grim + slurp
+        |
+        +-- PipeWire
+        |    `-- WirePlumber
+        |
+        +-- xdg-desktop-portal
+        |    +-- xdg-desktop-portal-wlr
+        |    `-- terminal FileChooser backend
+        |         +-- foot
+        |         +-- fd
+        |         `-- fzf
+        |
+        `-- NO:
+             desktop environment
+             display manager
+             graphical file manager
+             graphical launcher
+             status bar
+             XWayland
+             wallpaper daemon
+             graphical settings app
+             AUR helper
+             local man-page database
+             local documentation packages
+             plugin-heavy Neovim framework
+
+You can add those later when YOU decide they solve a real problem.
+
+===============================================================================
+== 00. PHILOSOPHY ==
+===============================================================================
+
+The point of this machine is not merely "use fewer packages".
+
+The real goals are:
+
+    1. Know what every MAJOR component does.
+    2. Let pacman handle boring low-level library dependencies.
+    3. Install major tools deliberately.
+    4. Write the installation step before or while installing the tool.
+    5. Keep configuration in Git.
+    6. Test one subsystem at a time.
+    7. Do not hide complexity behind a desktop environment.
+    8. Do not optimize things you do not yet understand.
+
+A dependency such as a shared library does not need its own installation ritual.
+
+A major tool does.
+
+Examples:
+
+    libffi
+        Let pacman handle it.
+
+    Git
+        Learn it deliberately.
+
+    wlroots
+        Learn what role it plays.
+
+    PipeWire
+        Learn what it replaces and what it does.
+
+    systemd-networkd
+        Learn how your network gets configured.
+
+    dwl
+        Build it yourself and understand its build system.
+
+A good final state is:
+
+    Every explicit package:
+        "I know why I requested this."
+
+    Every enabled service:
+        "I know why this runs."
+
+    Every major background process:
+        "I can identify who started it."
+
+===============================================================================
+== 01. CURRENT PROGRESS -- DO NOT REDO THE INSTALL ==
+===============================================================================
+
+Your first-boot health report showed that the important base system is already
+working.
+
+YOU HAVE ALREADY COMPLETED:
+
+    [DONE] Arch boots successfully.
+
+    [DONE] Linux kernel boots:
+           7.2.x Arch kernel at the time of the health report.
+
+    [DONE] systemd is PID 1.
+
+    [DONE] systemd-boot starts Arch.
+
+    [DONE] ext4 root filesystem mounts correctly.
+
+    [DONE] EFI/FAT boot filesystem mounts at /boot.
+
+    [DONE] AMD CPU microcode package is installed.
+
+    [DONE] Realtek firmware is installed.
+
+    [DONE] systemd-networkd is running.
+
+    [DONE] systemd-resolved is running.
+
+    [DONE] systemd-timesyncd is running.
+
+    [DONE] wired Ethernet works.
+
+    [DONE] DHCP works.
+
+    [DONE] DNS currently works.
+
+    [DONE] package set is still very small.
+
+    [DONE] no desktop environment.
+
+    [DONE] no display manager.
+
+    [DONE] no audio server.
+
+    [DONE] no graphical file manager.
+
+    [DONE] no GUI stack.
+
+    [DONE] RTX 3060 is currently using the kernel Nouveau driver.
+
+EXPLICIT PACKAGES OBSERVED IN THE FIRST HEALTH CHECK:
+
+    amd-ucode
+    base
+    dosfstools
+    e2fsprogs
+    less
+    linux
+    linux-firmware-nvidia
+    linux-firmware-realtek
+    mkinitcpio
+
+The purpose of the remainder of this guide is to continue FROM HERE.
+
+===============================================================================
+== 02. FIX THESE FIRST-BOOT ISSUES BEFORE ADDING ANYTHING ==
+===============================================================================
+
+The first health report was good, but two configuration issues should be fixed
+before progressing.
+
+Do these BEFORE Git, tmux, Neovim, NVIDIA, or dwl.
+
+-------------------------------------------------------------------------------
+02.1 FIX /etc/resolv.conf -> systemd-resolved
+-------------------------------------------------------------------------------
+
+WHAT WAS OBSERVED:
+
+    systemd-resolved was active,
+    DNS worked,
+    but resolvectl reported:
+
+        resolv.conf mode: foreign
+
+WHAT THAT MEANS:
+
+    systemd-resolved is running, but /etc/resolv.conf is not using its normal
+    stub resolver symlink.
+
+We want:
+
+    applications
+        -> /etc/resolv.conf
+        -> 127.0.0.53 systemd-resolved stub
+        -> DNS server learned from networkd/DHCP
+
+Inspect first:
+
+    ls -l /etc/resolv.conf
+    resolvectl status
+
+Become root:
+
+    su -
+
+Replace /etc/resolv.conf with the resolved stub symlink:
+
+    ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+
+Leave root:
+
+    exit
+
+Verify:
+
+    ls -l /etc/resolv.conf
+    resolvectl status
+
+You want the mode to report:
+
+    resolv.conf mode: stub
+
+Test name resolution:
+
+    getent hosts archlinux.org
+
+Test connectivity:
+
+    ping -c 3 archlinux.org
+
+WHY `getent`?
+
+    `ping archlinux.org` combines:
+        DNS resolution
+        + ICMP connectivity
+
+    `getent hosts archlinux.org` isolates the name-service lookup part.
+
+-------------------------------------------------------------------------------
+02.2 LOCK DOWN THE FAT /boot MOUNT
+-------------------------------------------------------------------------------
+
+WHAT WAS OBSERVED:
+
+    systemd-boot warned that:
+
+        /boot was world accessible
+        /boot/loader/random-seed was world accessible
+
+WHY THIS HAPPENS:
+
+    FAT does not store normal Unix permission bits.
+
+Linux therefore synthesizes permissions from mount options such as:
+
+    fmask=
+    dmask=
+    umask=
+
+Your boot partition was mounted too openly.
+
+Inspect:
+
+    grep -n '[[:space:]]/boot[[:space:]]' /etc/fstab
+    findmnt /boot
+
+Backup before editing:
+
+    su -
+    cp /etc/fstab /etc/fstab.before-boot-permissions
+
+If the /boot line contains:
+
+    fmask=0022,dmask=0022
+
+replace those with:
+
+    umask=0077
+
+Command:
+
+    sed -i \
+        '/[[:space:]]\/boot[[:space:]]/ s/fmask=0022,dmask=0022/umask=0077/' \
+        /etc/fstab
+
+Inspect BEFORE remounting:
+
+    grep -n '[[:space:]]/boot[[:space:]]' /etc/fstab
+
+Then:
+
+    mount -o remount /boot
+
+Leave root:
+
+    exit
+
+Verify:
+
+    findmnt -no OPTIONS /boot
+    stat -c '%a %n' /boot /boot/loader/random-seed
+
+The exact displayed mode can vary because FAT permissions are synthesized, but
+the important thing is that ordinary users are no longer given broad access.
+
+-------------------------------------------------------------------------------
+02.3 VERIFY TIME
+-------------------------------------------------------------------------------
+
+The first report had one early clock correction.
+
+That is normal on a fresh install if timesyncd corrects the initial clock.
+
+Check:
+
+    timedatectl
+
+Desired:
+
+    System clock synchronized: yes
+    NTP service: active
+
+-------------------------------------------------------------------------------
+02.4 CHECK FAILED SYSTEMD UNITS
+-------------------------------------------------------------------------------
+
+Run:
+
+    systemctl --failed
+
+As your normal user also run:
+
+    systemctl --user --failed
+
+A clean result normally looks like:
+
+    0 loaded units listed
+
+Do NOT randomly disable services merely because they exist.
+
+-------------------------------------------------------------------------------
+02.5 FIRST CHECKPOINT: BOOT HEALTH ONLY
+-------------------------------------------------------------------------------
+
+This health script intentionally checks ONLY the boot/core system.
+
+It does not care whether:
+    networking works
+    Git works
+    NVIDIA works
+    dwl exists
+    audio exists
+
+Create your project directories first:
+
+    mkdir -p ~/src/launch/{install,health,config,bin,notes,guide}
+
+Create:
+
+    cat > ~/src/launch/health/00-boot.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -u
+
+    failures=0
+    warnings=0
+
+    pass() { printf '[PASS] %s\n' "$*"; }
+    warn() { printf '[WARN] %s\n' "$*"; warnings=$((warnings + 1)); }
+    fail() { printf '[FAIL] %s\n' "$*"; failures=$((failures + 1)); }
+
+    echo '=== BOOT / CORE HEALTH ==='
+
+    if [[ "$(cat /proc/1/comm 2>/dev/null)" == "systemd" ]]; then
+        pass "systemd is PID 1"
+    else
+        fail "PID 1 is not systemd"
+    fi
+
+    if findmnt -rn / >/dev/null 2>&1; then
+        pass "root filesystem is mounted"
+        findmnt /
+    else
+        fail "root filesystem could not be inspected"
+    fi
+
+    if findmnt -rn /boot >/dev/null 2>&1; then
+        pass "/boot is mounted"
+        findmnt /boot
+    else
+        warn "/boot is not currently mounted"
+    fi
+
+    if [[ -r /proc/version ]]; then
+        pass "kernel is running"
+        uname -a
+    else
+        fail "kernel information unavailable"
+    fi
+
+    failed_units="$(systemctl --failed --no-legend --plain 2>/dev/null | sed '/^[[:space:]]*$/d')"
+    if [[ -z "$failed_units" ]]; then
+        pass "no failed system units"
+    else
+        fail "failed system units exist"
+        printf '%s\n' "$failed_units"
+    fi
+
+    if bootctl is-installed >/dev/null 2>&1; then
+        pass "systemd-boot is installed"
+    else
+        warn "bootctl does not report systemd-boot as installed"
+    fi
+
+    echo
+    printf 'RESULT: %d failure(s), %d warning(s)\n' "$failures" "$warnings"
+
+    (( failures == 0 ))
+    EOF
+
+Make executable:
+
+    chmod +x ~/src/launch/health/00-boot.sh
+
+Run:
+
+    ~/src/launch/health/00-boot.sh
+
+This is your CHECKPOINT 0.
+
+Do not proceed if it reports a real FAIL you do not understand.
+
+===============================================================================
+== 03. HOW TO READ THIS GUIDE ==
+===============================================================================
+
+Set:
+
+    GUIDE=~/src/launch/guide/arch-dwl-field-guide.txt
+
+If you store this guide elsewhere, change GUIDE accordingly.
+
+TABLE OF CONTENTS:
+
+    grep -n '^== ' "$GUIDE"
+
+SEARCH FOR A WORD:
+
+    grep -n -i 'nvidia' "$GUIDE"
+
+SEARCH WITH CONTEXT:
+
+    grep -n -i -C 5 'nvidia' "$GUIDE"
+
+READ A LINE RANGE:
+
+    sed -n '300,380p' "$GUIDE"
+
+READ THE WHOLE FILE:
+
+    cat "$GUIDE"
+
+PAGE THROUGH THE FILE:
+
+    less "$GUIDE"
+
+`less` is already installed on your current system.
+
+Useful less keys:
+
+    /word       search forward
+    n           next match
+    N           previous match
+    g           top
+    G           bottom
+    q           quit
+
+-------------------------------------------------------------------------------
+03.1 READ A WHOLE NAMED SECTION
+-------------------------------------------------------------------------------
+
+Add this function temporarily in your shell:
+
+    section() {
+        awk -v section="$*" '
+        /^== / {
+            if (found) exit
+            if (tolower($0) ~ tolower(section)) found=1
+        }
+        found
+        ' "$GUIDE"
+    }
+
+Examples:
+
+    section "NVIDIA"
+    section "TMUX"
+    section "MAKE"
+    section "DWL"
+
+Later you can put the function in ~/.bashrc if you keep using it.
+
+===============================================================================
+== 04. THE LOCAL REPOSITORY LAYOUT ==
+===============================================================================
+
+Canonical path:
+
+    ~/src/launch
+
+Why ~/src?
+
+    ~
+        your home
+
+    ~/src
+        source trees and projects you actively maintain
+
+    ~/src/launch
+        your machine setup / install scripts / configs / health tests
+
+Use:
+
+    mkdir -p ~/src/launch/{install,health,config,bin,notes,guide}
+
+Target layout:
+
+    ~/src/launch/
+    |
+    |-- install/
+    |   |-- 10-git-ssh.sh
+    |   |-- 20-tmux.sh
+    |   |-- 30-neovim.sh
+    |   |-- 40-shell-tools.sh
+    |   |-- 50-build-tools.sh
+    |   |-- 60-nvidia.sh
+    |   |-- 70-wayland-dwl-deps.sh
+    |   |-- 80-foot.sh
+    |   |-- 90-audio.sh
+    |   |-- 100-desktop-tools.sh
+    |   `-- 110-portals.sh
+    |
+    |-- health/
+    |   |-- 00-boot.sh
+    |   |-- 10-network.sh
+    |   |-- 20-git.sh
+    |   |-- 30-tty-dev.sh
+    |   |-- 40-nvidia.sh
+    |   |-- 50-dwl.sh
+    |   |-- 60-audio.sh
+    |   |-- 70-desktop-tools.sh
+    |   `-- 80-portals.sh
+    |
+    |-- config/
+    |   |-- tmux/
+    |   |-- nvim/
+    |   |-- foot/
+    |   |-- fnott/
+    |   |-- dwl/
+    |   `-- xdg-desktop-portal/
+    |
+    |-- bin/
+    |
+    |-- notes/
+    |
+    `-- guide/
+
+The health scripts are deliberately INDEPENDENT.
+
+Example:
+
+    health/60-audio.sh
+
+checks audio.
+
+It does NOT call:
+    health/00-boot.sh
+    health/10-network.sh
+    health/20-git.sh
+
+That means you can diagnose one layer without a giant "everything test".
+
+===============================================================================
+== 05. WRITING SCRIPTS BEFORE YOU HAVE AN EDITOR ==
+===============================================================================
+
+You already used this model during installation.
+
+Create a script with a heredoc:
+
+    cat > ~/src/launch/install/example.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    echo "hello"
+    EOF
+
+Make executable:
+
+    chmod +x ~/src/launch/install/example.sh
+
+Run:
+
+    ~/src/launch/install/example.sh
+
+Inspect:
+
+    cat ~/src/launch/install/example.sh
+
+WHY:
+
+    cat > FILE <<'EOF'
+
+means:
+
+    send all following literal lines into FILE
+    until a line containing only EOF appears
+
+Because EOF is quoted:
+
+    <<'EOF'
+
+variables are NOT expanded while creating the file.
+
+That is usually what you want for shell-script source code.
+
+===============================================================================
+== 06. PACKAGE-INSTALLATION HABIT ==
+===============================================================================
+
+Before a meaningful install:
+
+1. SEARCH:
+
+    pacman -Ss PACKAGE
+
+2. READ PACKAGE METADATA:
+
+    pacman -Si PACKAGE
+
+3. PREVIEW THE TRANSACTION:
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' PACKAGE
+
+Fields:
+
+    %n      package name
+    %v      version
+    %s      download size
+    %d      description
+
+4. INSTALL:
+
+    su -
+    pacman -Syu --needed PACKAGE
+    exit
+
+Why `-Syu`?
+
+    -S      sync/install
+    -y      refresh package databases
+    -u      upgrade the whole system
+
+Arch is a rolling release.
+
+Avoid partial upgrades such as:
+
+    pacman -Sy PACKAGE
+
+Prefer a full synchronized transaction.
+
+===============================================================================
+== 07. NETWORK CHECKPOINT ==
+===============================================================================
+
+Create:
+
+    cat > ~/src/launch/health/10-network.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -u
+
+    failures=0
+    warnings=0
+    pass() { printf '[PASS] %s\n' "$*"; }
+    warn() { printf '[WARN] %s\n' "$*"; warnings=$((warnings + 1)); }
+    fail() { printf '[FAIL] %s\n' "$*"; failures=$((failures + 1)); }
+
+    echo '=== NETWORK HEALTH ==='
+
+    if systemctl is-active --quiet systemd-networkd.service; then
+        pass "systemd-networkd is active"
+    else
+        fail "systemd-networkd is not active"
+    fi
+
+    if systemctl is-active --quiet systemd-resolved.service; then
+        pass "systemd-resolved is active"
+    else
+        fail "systemd-resolved is not active"
+    fi
+
+    if [[ -L /etc/resolv.conf ]]; then
+        target="$(readlink /etc/resolv.conf)"
+        printf 'resolv.conf -> %s\n' "$target"
+        if [[ "$target" == *systemd/resolve/stub-resolv.conf* ]]; then
+            pass "/etc/resolv.conf uses resolved stub"
+        else
+            warn "/etc/resolv.conf is a symlink, but not to resolved stub"
+        fi
+    else
+        fail "/etc/resolv.conf is not a symlink"
+    fi
+
+    if ip route | grep -q '^default '; then
+        pass "default route exists"
+        ip route | grep '^default '
+    else
+        fail "no default route"
+    fi
+
+    if getent hosts archlinux.org >/dev/null 2>&1; then
+        pass "DNS resolution works"
+    else
+        fail "DNS lookup failed"
+    fi
+
+    if ping -c 1 -W 3 archlinux.org >/dev/null 2>&1; then
+        pass "internet connectivity works"
+    else
+        warn "ping failed; DNS may still work and ICMP can be filtered"
+    fi
+
+    echo
+    networkctl --no-pager 2>/dev/null || true
+    echo
+    resolvectl status 2>/dev/null || true
+
+    echo
+    printf 'RESULT: %d failure(s), %d warning(s)\n' "$failures" "$warnings"
+    (( failures == 0 ))
+    EOF
+
+    chmod +x ~/src/launch/health/10-network.sh
+
+Run:
+
+    ~/src/launch/health/10-network.sh
+
+This is CHECKPOINT 1.
+
+===============================================================================
+== 08. GIT + OPENSSH -- FIRST REAL ADDED TOOLS ==
+===============================================================================
+
+WHY GIT NOW?
+
+Everything after this will generate:
+
+    scripts
+    config
+    health checks
+    dwl config.h
+    build notes
+
+Git gives you a history of every system change.
+
+WHY OPENSSH?
+
+You want GitHub without passwords/tokens on every push.
+
+SSH provides:
+    ssh
+    scp
+    sftp
+    ssh-keygen
+
+Create installer:
+
+    cat > ~/src/launch/install/10-git-ssh.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    (( EUID == 0 )) || {
+        echo "run as root"
+        exit 1
+    }
+
+    packages=(
+        git
+        openssh
+    )
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' "${packages[@]}"
+    pacman -Syu --needed "${packages[@]}"
+    EOF
+
+    chmod +x ~/src/launch/install/10-git-ssh.sh
+
+Run:
+
+    su -
+    /home/lucky/src/launch/install/10-git-ssh.sh
+    exit
+
+Change `/home/lucky` if your username differs.
+
+-------------------------------------------------------------------------------
+08.1 GIT CONFIG
+-------------------------------------------------------------------------------
+
+As normal user:
+
+    git config --global user.name "YOUR NAME"
+    git config --global user.email "YOUR_EMAIL"
+
+Inspect:
+
+    git config --global --list
+
+-------------------------------------------------------------------------------
+08.2 GITHUB SSH KEY
+-------------------------------------------------------------------------------
+
+Generate:
+
+    ssh-keygen -t ed25519 -C "YOUR_EMAIL"
+
+Accept default path unless you have a reason not to:
+
+    ~/.ssh/id_ed25519
+
+Files:
+
+    ~/.ssh/id_ed25519
+        PRIVATE KEY
+        NEVER upload
+        NEVER paste into chat
+        NEVER commit
+
+    ~/.ssh/id_ed25519.pub
+        PUBLIC KEY
+        safe to upload to GitHub
+
+Display public key:
+
+    cat ~/.ssh/id_ed25519.pub
+
+On GitHub:
+
+    Settings
+        -> SSH and GPG keys
+        -> New SSH key
+        -> paste PUBLIC key
+
+Test:
+
+    ssh -T git@github.com
+
+GitHub intentionally does not provide shell access, so successful
+authentication can still return a non-zero shell-style status.
+
+-------------------------------------------------------------------------------
+08.3 TURN ~/src/launch INTO A REPOSITORY
+-------------------------------------------------------------------------------
+
+    cd ~/src/launch
+    git init -b main
+
+Create a small readme:
+
+    cat > README.txt <<'EOF'
+    launch
+
+    My minimal Arch Linux build, configuration, and health checks.
+    EOF
+
+Commit:
+
+    git add .
+    git status
+    git commit -m "bootstrap launch repository"
+
+Create an EMPTY `launch` repository on GitHub.
+
+Do not initialize it with README/LICENSE if your local repo already has commits.
+
+Add remote:
+
+    git remote add origin git@github.com:YOUR_USERNAME/launch.git
+
+Inspect:
+
+    git remote -v
+
+Push:
+
+    git push -u origin main
+
+-------------------------------------------------------------------------------
+08.4 GIT CHEAT TABLE
+-------------------------------------------------------------------------------
+
+    git status
+        What changed?
+
+    git diff
+        Show unstaged changes.
+
+    git diff --staged
+        Show staged changes.
+
+    git add FILE
+        Stage file.
+
+    git add .
+        Stage current tree.
+
+    git commit -m "message"
+        Create commit.
+
+    git log --oneline --graph --decorate -20
+        Compact history.
+
+    git push
+        Push current branch.
+
+    git pull
+        Fetch + integrate remote changes.
+
+    git restore FILE
+        Discard unstaged changes in FILE.
+
+    git switch BRANCH
+        Switch branch.
+
+    git switch -c NAME
+        Create and switch to branch.
+
+    git remote -v
+        Show remotes.
+
+===============================================================================
+== 09. GIT HEALTH CHECKPOINT ==
+===============================================================================
+
+Create:
+
+    cat > ~/src/launch/health/20-git.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -u
+
+    failures=0
+    warnings=0
+    pass() { printf '[PASS] %s\n' "$*"; }
+    warn() { printf '[WARN] %s\n' "$*"; warnings=$((warnings + 1)); }
+    fail() { printf '[FAIL] %s\n' "$*"; failures=$((failures + 1)); }
+
+    echo '=== GIT / GITHUB HEALTH ==='
+
+    if command -v git >/dev/null 2>&1; then
+        pass "git exists"
+        git --version
+    else
+        fail "git is missing"
+    fi
+
+    if command -v ssh >/dev/null 2>&1; then
+        pass "ssh exists"
+        ssh -V 2>&1 | head -n 1
+    else
+        fail "ssh is missing"
+    fi
+
+    if [[ -f "$HOME/.ssh/id_ed25519" ]]; then
+        pass "private SSH key exists"
+    else
+        warn "default ed25519 private key not found"
+    fi
+
+    if [[ -f "$HOME/.ssh/id_ed25519.pub" ]]; then
+        pass "public SSH key exists"
+    else
+        warn "default ed25519 public key not found"
+    fi
+
+    repo="$HOME/src/launch"
+
+    if git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        pass "~/src/launch is a Git repository"
+    else
+        fail "~/src/launch is not a Git repository"
+    fi
+
+    if git -C "$repo" remote get-url origin >/dev/null 2>&1; then
+        pass "origin remote exists"
+        git -C "$repo" remote -v
+    else
+        warn "origin remote is not configured"
+    fi
+
+    auth_output="$(ssh -T -o BatchMode=yes -o ConnectTimeout=5 git@github.com 2>&1 || true)"
+
+    if grep -qi 'successfully authenticated' <<<"$auth_output"; then
+        pass "GitHub SSH authentication works"
+    else
+        warn "GitHub SSH authentication was not confirmed"
+        printf '%s\n' "$auth_output"
+    fi
+
+    echo
+    printf 'RESULT: %d failure(s), %d warning(s)\n' "$failures" "$warnings"
+    (( failures == 0 ))
+    EOF
+
+    chmod +x ~/src/launch/health/20-git.sh
+
+Run:
+
+    ~/src/launch/health/20-git.sh
+
+This is CHECKPOINT 2.
+
+Commit:
+
+    cd ~/src/launch
+    git add .
+    git commit -m "add git health checkpoint"
+    git push
+
+===============================================================================
+== 10. TMUX -- MAKE THE RAW TTY COMFORTABLE ==
+===============================================================================
+
+WHY TMUX BEFORE A GUI?
+
+Right now you have one kernel virtual terminal.
+
+tmux gives you:
+
+    sessions
+        persistent terminal workspaces
+
+    windows
+        like terminal tabs
+
+    panes
+        split one terminal into multiple shells
+
+    detach/attach
+        leave a workspace running and return later
+
+This works identically in:
+
+    Linux TTY today
+
+and later:
+
+    dwl
+        -> foot
+            -> tmux
+                -> bash
+                    -> nvim
+
+Your tmux workflow therefore survives the move to Wayland unchanged.
+
+-------------------------------------------------------------------------------
+10.1 INSTALL
+-------------------------------------------------------------------------------
+
+Create:
+
+    cat > ~/src/launch/install/20-tmux.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    (( EUID == 0 )) || { echo "run as root"; exit 1; }
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' tmux
+    pacman -Syu --needed tmux
+    EOF
+
+    chmod +x ~/src/launch/install/20-tmux.sh
+
+Run as root.
+
+-------------------------------------------------------------------------------
+10.2 TMUX MENTAL MODEL
+-------------------------------------------------------------------------------
+
+Think:
+
+    tmux server
+        |
+        +-- session: main
+        |    |
+        |    +-- window 1
+        |    |    +-- pane
+        |    |
+        |    +-- window 2
+        |         +-- pane
+        |         +-- pane
+        |
+        `-- session: other
+
+Start:
+
+    tmux
+
+Named session:
+
+    tmux new -s main
+
+List:
+
+    tmux ls
+
+Detach from inside tmux:
+
+    Ctrl-b d
+
+Reattach:
+
+    tmux attach
+
+or:
+
+    tmux attach -t main
+
+-------------------------------------------------------------------------------
+10.3 HOW TMUX KEYBINDINGS WORK
+-------------------------------------------------------------------------------
+
+tmux has a PREFIX key.
+
+Default:
+
+    Ctrl-b
+
+Most tmux commands are:
+
+    press Ctrl-b
+    release
+    press another key
+
+Example:
+
+    Ctrl-b c
+
+means:
+
+    Ctrl-b
+    then c
+
+It does NOT mean hold Ctrl-b and c simultaneously.
+
+DEFAULT USEFUL BINDINGS:
+
+    Ctrl-b c
+        new window
+
+    Ctrl-b n
+        next window
+
+    Ctrl-b p
+        previous window
+
+    Ctrl-b %
+        split left/right
+
+    Ctrl-b "
+        split top/bottom
+
+    Ctrl-b arrow
+        select pane
+
+    Ctrl-b x
+        kill pane
+
+    Ctrl-b &
+        kill window
+
+    Ctrl-b d
+        detach
+
+    Ctrl-b [
+        copy/scroll mode
+
+    Ctrl-b ?
+        list bindings
+
+-------------------------------------------------------------------------------
+10.4 MINIMAL TMUX CONFIG
+-------------------------------------------------------------------------------
+
+Create tracked config:
+
+    mkdir -p ~/src/launch/config/tmux
+
+    cat > ~/src/launch/config/tmux/tmux.conf <<'EOF'
+    # Keep configuration intentionally small.
+
+    set -g history-limit 20000
+
+    # Start numbering at 1 because keyboard number keys line up naturally.
+    set -g base-index 1
+    setw -g pane-base-index 1
+
+    # Renumber windows after one closes.
+    set -g renumber-windows on
+
+    # Vi-like keys while in copy mode.
+    setw -g mode-keys vi
+
+    # Keep mouse disabled: learn the keyboard model first.
+    set -g mouse off
+    EOF
+
+Create config directory:
+
+    mkdir -p ~/.config/tmux
+
+Link:
+
+    ln -s ~/src/launch/config/tmux/tmux.conf ~/.config/tmux/tmux.conf
+
+Test:
+
+    tmux -f ~/.config/tmux/tmux.conf new -s test
+
+Detach:
+
+    Ctrl-b d
+
+Kill test:
+
+    tmux kill-session -t test
+
+-------------------------------------------------------------------------------
+10.5 CUSTOMIZE TMUX KEYS YOURSELF
+-------------------------------------------------------------------------------
+
+Do NOT memorize somebody else's config.
+
+Understand these commands:
+
+    bind KEY COMMAND
+        bind a key AFTER prefix
+
+    bind -n KEY COMMAND
+        bind without prefix
+
+    unbind KEY
+        remove binding
+
+Example:
+
+    bind h select-pane -L
+    bind j select-pane -D
+    bind k select-pane -U
+    bind l select-pane -R
+
+Then:
+
+    Ctrl-b h
+        pane left
+
+Changing prefix to Ctrl-a would require:
+
+    unbind C-b
+    set -g prefix C-a
+    bind C-a send-prefix
+
+We are NOT enabling that for you.
+
+Why?
+
+    You should decide whether Ctrl-b annoys you after actually using tmux.
+
+Reload config while tmux is running:
+
+    tmux source-file ~/.config/tmux/tmux.conf
+
+See current keys:
+
+    tmux list-keys
+
+See options:
+
+    tmux show-options -g
+
+===============================================================================
+== 11. NEOVIM -- FIRST TEXT EDITOR ==
+===============================================================================
+
+Neovim is your first editor in this guide.
+
+No Nano stepping stone.
+No Vim stepping stone.
+No plugin framework.
+
+WHY INSTALL IT NOW?
+
+At this point you already understand how to create scripts without an editor.
+
+Now Neovim becomes a productivity tool rather than a bootstrap dependency.
+
+-------------------------------------------------------------------------------
+11.1 INSTALL
+-------------------------------------------------------------------------------
+
+Create:
+
+    cat > ~/src/launch/install/30-neovim.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    (( EUID == 0 )) || { echo "run as root"; exit 1; }
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' neovim
+    pacman -Syu --needed neovim
+    EOF
+
+Run as root.
+
+-------------------------------------------------------------------------------
+11.2 MINIMAL CONFIG
+-------------------------------------------------------------------------------
+
+Create:
+
+    mkdir -p ~/src/launch/config/nvim
+
+    cat > ~/src/launch/config/nvim/init.lua <<'EOF'
+    vim.g.mapleader = " "
+
+    vim.opt.number = true
+    vim.opt.relativenumber = true
+
+    vim.opt.tabstop = 4
+    vim.opt.shiftwidth = 4
+    vim.opt.expandtab = true
+    vim.opt.smartindent = true
+
+    vim.opt.ignorecase = true
+    vim.opt.smartcase = true
+
+    vim.opt.splitright = true
+    vim.opt.splitbelow = true
+
+    vim.opt.scrolloff = 4
+
+    vim.keymap.set("n", "<leader>w", "<cmd>write<cr>", { desc = "write file" })
+    vim.keymap.set("n", "<leader>q", "<cmd>quit<cr>", { desc = "quit" })
+    EOF
+
+Link:
+
+    mkdir -p ~/.config
+    ln -s ~/src/launch/config/nvim ~/.config/nvim
+
+Test:
+
+    nvim
+
+-------------------------------------------------------------------------------
+11.3 ESSENTIAL NEOVIM COMMANDS
+-------------------------------------------------------------------------------
+
+MODES:
+
+    Normal
+        navigation / commands
+
+    Insert
+        entering text
+
+    Visual
+        selecting
+
+Enter insert mode:
+
+    i
+
+Return to normal:
+
+    Esc
+
+SAVE:
+
+    :w
+
+QUIT:
+
+    :q
+
+SAVE + QUIT:
+
+    :wq
+
+QUIT WITHOUT SAVING:
+
+    :q!
+
+OPEN FILE:
+
+    :e path/to/file
+
+BUILT-IN FILE BROWSER:
+
+    :Ex
+
+SEARCH:
+
+    /text
+
+Next result:
+
+    n
+
+Previous:
+
+    N
+
+MOVEMENT:
+
+    h j k l
+        left down up right
+
+    w
+        next word
+
+    b
+        previous word
+
+    0
+        beginning of line
+
+    $
+        end of line
+
+    gg
+        file top
+
+    G
+        file bottom
+
+DELETE LINE:
+
+    dd
+
+COPY LINE:
+
+    yy
+
+PASTE:
+
+    p
+
+UNDO:
+
+    u
+
+REDO:
+
+    Ctrl-r
+
+SPLIT:
+
+    :split
+    :vsplit
+
+Move between splits:
+
+    Ctrl-w h
+    Ctrl-w j
+    Ctrl-w k
+    Ctrl-w l
+
+No plugin is required for any of this.
+
+===============================================================================
+== 12. TTY DEVELOPMENT HEALTH CHECKPOINT ==
+===============================================================================
+
+Create:
+
+    cat > ~/src/launch/health/30-tty-dev.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -u
+
+    failures=0
+    warnings=0
+    pass() { printf '[PASS] %s\n' "$*"; }
+    warn() { printf '[WARN] %s\n' "$*"; warnings=$((warnings + 1)); }
+    fail() { printf '[FAIL] %s\n' "$*"; failures=$((failures + 1)); }
+
+    echo '=== TTY DEVELOPMENT HEALTH ==='
+
+    if command -v tmux >/dev/null 2>&1; then
+        pass "tmux exists"
+        tmux -V
+    else
+        fail "tmux missing"
+    fi
+
+    if [[ -f "$HOME/.config/tmux/tmux.conf" ]]; then
+        pass "tmux config exists"
+    else
+        warn "tmux config missing"
+    fi
+
+    socket="launch-health-$$"
+
+    if tmux -L "$socket" -f "$HOME/.config/tmux/tmux.conf" \
+        new-session -d -s health >/dev/null 2>&1
+    then
+        pass "tmux can start using the config"
+        tmux -L "$socket" kill-server >/dev/null 2>&1 || true
+    else
+        fail "tmux failed to start with current config"
+    fi
+
+    if command -v nvim >/dev/null 2>&1; then
+        pass "Neovim exists"
+        nvim --version | head -n 2
+    else
+        fail "Neovim missing"
+    fi
+
+    if [[ -f "$HOME/.config/nvim/init.lua" ]]; then
+        pass "Neovim config exists"
+    else
+        warn "Neovim config missing"
+    fi
+
+    if nvim --headless '+quit' >/dev/null 2>&1; then
+        pass "Neovim starts headlessly with current config"
+    else
+        fail "Neovim config/startup failed"
+    fi
+
+    echo
+    printf 'RESULT: %d failure(s), %d warning(s)\n' "$failures" "$warnings"
+    (( failures == 0 ))
+    EOF
+
+    chmod +x ~/src/launch/health/30-tty-dev.sh
+
+Run:
+
+    ~/src/launch/health/30-tty-dev.sh
+
+This is CHECKPOINT 3.
+
+At this point you should be able to comfortably work with:
+
+    TTY
+        -> tmux
+            -> Bash
+            -> Neovim
+            -> Git
+
+before touching Wayland.
+
+===============================================================================
+== 13. MODERN SHELL TOOLS THAT SERVE THE FINAL STACK ==
+===============================================================================
+
+These are not random "rice" utilities.
+
+They serve real roles later.
+
+    ripgrep
+        fast recursive text search
+        command: rg
+
+    fd
+        convenient file finder
+        command: fd
+
+    fzf
+        fuzzy selector
+        command: fzf
+
+fd + fzf will later power your terminal file chooser.
+
+Install:
+
+    cat > ~/src/launch/install/40-shell-tools.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    (( EUID == 0 )) || { echo "run as root"; exit 1; }
+
+    packages=(
+        ripgrep
+        fd
+        fzf
+    )
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' "${packages[@]}"
+    pacman -Syu --needed "${packages[@]}"
+    EOF
+
+Commands:
+
+    rg text
+    rg text PATH
+    rg -n text PATH
+    rg --files
+
+    fd name
+    fd -e c
+    fd pattern path
+
+    fd | fzf
+    rg --files | fzf
+
+These tools are composable rather than desktop-specific.
+
+===============================================================================
+== 14. MAKE: WHAT IT ACTUALLY DOES ==
+===============================================================================
+
+You said you do not yet know Make well.
+
+You will use Make to build dwl, so understand it BEFORE dwl.
+
+-------------------------------------------------------------------------------
+14.1 MAKE IS NOT A COMPILER
+-------------------------------------------------------------------------------
+
+This distinction is important.
+
+    gcc / cc
+        compiler + linker driver
+
+    make
+        decides WHICH commands need to run and WHEN
+
+    Makefile
+        file containing build rules
+
+Example build manually:
+
+    cc main.c -o hello
+
+Make can automate that.
+
+-------------------------------------------------------------------------------
+14.2 SIMPLE MAKEFILE
+-------------------------------------------------------------------------------
+
+Create practice directory:
+
+    mkdir -p ~/src/make-practice
+    cd ~/src/make-practice
+
+Create C file:
+
+    cat > main.c <<'EOF'
+    #include <stdio.h>
+
+    int main(void)
+    {
+        puts("hello from make");
+        return 0;
+    }
+    EOF
+
+Create Makefile:
+
+    cat > Makefile <<'EOF'
+    CC = cc
+    CFLAGS = -Wall -Wextra
+
+    hello: main.c
+    	$(CC) $(CFLAGS) main.c -o hello
+
+    clean:
+    	rm -f hello
+    EOF
+
+IMPORTANT:
+
+The indented command lines inside a traditional Makefile MUST start with a TAB,
+not spaces.
+
+Run:
+
+    make
+
+Make reads:
+
+    hello: main.c
+
+as:
+
+    TARGET: DEPENDENCIES
+
+Meaning:
+
+    build `hello`
+    if:
+        hello does not exist
+        OR main.c is newer than hello
+
+Then it runs:
+
+    cc -Wall -Wextra main.c -o hello
+
+Run:
+
+    ./hello
+
+Run make again:
+
+    make
+
+You will probably see:
+
+    make: 'hello' is up to date.
+
+WHY?
+
+Because Make checked timestamps and decided rebuilding was unnecessary.
+
+Change source:
+
+    printf '\n' >> main.c
+
+Now:
+
+    make
+
+It rebuilds because main.c is newer.
+
+-------------------------------------------------------------------------------
+14.3 MAKE VARIABLES
+-------------------------------------------------------------------------------
+
+In:
+
+    CC = cc
+    CFLAGS = -Wall -Wextra
+
+Use with:
+
+    $(CC)
+    $(CFLAGS)
+
+Common build variables:
+
+    CC
+        C compiler
+
+    CFLAGS
+        compiler flags
+
+    CPPFLAGS
+        preprocessor flags
+
+    LDFLAGS
+        linker flags
+
+    LDLIBS
+        libraries to link
+
+    PREFIX
+        desired installation prefix
+
+Common prefix:
+
+    /usr/local
+
+This typically means:
+
+    /usr/local/bin
+    /usr/local/lib
+    /usr/local/share
+
+-------------------------------------------------------------------------------
+14.4 TARGETS
+-------------------------------------------------------------------------------
+
+When you run:
+
+    make
+
+Make builds the default/first target.
+
+When you run:
+
+    make clean
+
+Make explicitly asks for target:
+
+    clean
+
+When you run:
+
+    make install
+
+Make explicitly asks for:
+
+    install
+
+These target names are conventions, not magic language keywords.
+
+-------------------------------------------------------------------------------
+14.5 PHONY TARGETS
+-------------------------------------------------------------------------------
+
+If a target does not represent a real output file, Makefiles often declare:
+
+    .PHONY: clean install
+
+Why?
+
+Otherwise, if a real file called `clean` existed, Make could decide:
+
+    "clean already exists"
+
+and skip the command.
+
+-------------------------------------------------------------------------------
+14.6 OBJECT FILES
+-------------------------------------------------------------------------------
+
+Large C builds usually do:
+
+    source.c
+        -> source.o
+        -> final executable
+
+Compile only:
+
+    cc -c source.c -o source.o
+
+Link:
+
+    cc source.o other.o -o app
+
+Why?
+
+If only one source file changes, you rebuild one .o rather than every source
+file.
+
+dwl uses this style.
+
+-------------------------------------------------------------------------------
+14.7 CLEAN
+-------------------------------------------------------------------------------
+
+Typical:
+
+    make clean
+
+does NOT uninstall anything.
+
+It usually removes generated build files:
+
+    *.o
+    generated headers
+    executable
+
+That lets you force a complete rebuild:
+
+    make clean
+    make
+
+For dwl config changes, this is a useful simple habit.
+
+-------------------------------------------------------------------------------
+14.8 INSTALL IS JUST ANOTHER TARGET
+-------------------------------------------------------------------------------
+
+`make install` usually copies built files into system paths.
+
+It is NOT the same thing as pacman.
+
+Pacman tracks:
+    package files
+    versions
+    dependencies
+    ownership
+
+A random `make install` normally does not.
+
+For this guide we will:
+
+    use `make` to BUILD dwl
+
+but:
+
+    manually install only the dwl binary
+
+with:
+
+    install -Dm755 dwl /usr/local/bin/dwl
+
+WHY?
+
+dwl's normal install target also installs:
+    a man page
+    a session desktop file
+
+You do not use:
+    a display manager
+    local man documentation
+
+So we deliberately install only the needed executable.
+
+Removal is then completely obvious:
+
+    rm /usr/local/bin/dwl
+
+-------------------------------------------------------------------------------
+14.9 INSPECT A MAKEFILE
+-------------------------------------------------------------------------------
+
+Before running make in unfamiliar source:
+
+    sed -n '1,220p' Makefile
+    sed -n '1,220p' config.mk
+
+Look for:
+
+    all:
+    clean:
+    install:
+    CC
+    CFLAGS
+    PREFIX
+    DESTDIR
+
+Useful dry-ish inspection:
+
+    make -n
+
+`-n` prints the commands Make WOULD execute without actually executing most of
+them.
+
+For dwl:
+
+    make -n
+
+is a useful way to see how source files will be compiled.
+
+===============================================================================
+== 15. BUILD TOOLCHAIN ==
+===============================================================================
+
+To compile dwl and later build the terminal FileChooser AUR package, install the
+standard Arch development tool set:
+
+    base-devel
+
+This is intentionally a larger conceptual step.
+
+It includes core build tooling such as:
+
+    gcc
+    make
+    pkgconf
+    binutils
+    patch
+    fakeroot
+    autoconf
+    automake
+    and related build tools
+
+WHY base-devel INSTEAD OF RANDOMLY INSTALLING THEM ONE BY ONE?
+
+Arch build instructions and AUR PKGBUILDs assume the base-devel environment
+exists.
+
+This is one of the few places where installing a known toolchain group is more
+useful than pretending each piece is unrelated.
+
+Create:
+
+    cat > ~/src/launch/install/50-build-tools.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    (( EUID == 0 )) || { echo "run as root"; exit 1; }
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' base-devel
+    pacman -Syu --needed base-devel
+    EOF
+
+After installation:
+
+    cc --version
+    make --version
+    pkg-config --version
+    ld --version | head -n 1
+    readelf --version | head -n 1
+    objdump --version | head -n 1
+
+Useful binary-inspection commands:
+
+    file BINARY
+    ldd BINARY
+    readelf -h BINARY
+    readelf -d BINARY
+    objdump -d BINARY
+    nm BINARY
+
+===============================================================================
+== 16. NVIDIA DRIVER DECISION FOR YOUR RTX 3060 ==
+===============================================================================
+
+YOUR GPU:
+
+    RTX 3060
+    Ampere generation
+
+CURRENT DRIVER:
+
+    nouveau
+
+TARGET DRIVER:
+
+    nvidia-open
+
+WHY nvidia-open?
+
+As of this guide's snapshot:
+
+    NVIDIA upstream recommends the open kernel module on supported GPUs.
+
+Ampere is supported.
+
+Arch's current package set recommends:
+
+    stock `linux` kernel:
+        nvidia-open
+
+    stock `linux-lts`:
+        nvidia-open-lts
+
+    arbitrary/custom kernels:
+        nvidia-open-dkms
+
+You are using the normal Arch `linux` package.
+
+Therefore the simplest current choice is:
+
+    nvidia-open
+
+NOT:
+
+    nvidia-open-dkms
+
+Why avoid DKMS here?
+
+DKMS is useful when:
+    you use custom kernels
+    you use multiple kernels
+    you need modules rebuilt locally for arbitrary kernels
+
+You currently do not.
+
+The prebuilt kernel-matched package is simpler.
+
+-------------------------------------------------------------------------------
+16.1 IMPORTANT: OPEN KERNEL DRIVER DOES NOT MEAN FULLY OPEN USERSPACE
+-------------------------------------------------------------------------------
+
+nvidia-open contains the open-source kernel-module flavor.
+
+It depends on:
+
+    nvidia-utils
+
+The NVIDIA userspace OpenGL/Vulkan/driver libraries are still NVIDIA's
+userspace driver stack.
+
+This package is large.
+
+That is NOT accidental desktop bloat.
+
+For NVIDIA hardware, these are the driver components needed for high-performance
+graphics.
+
+-------------------------------------------------------------------------------
+16.2 FUTURE PACSTRAP: CHOOSING THE RIGHT DRIVER FROM THE START
+-------------------------------------------------------------------------------
+
+THIS SECTION IS FOR A FUTURE REINSTALL.
+
+For THIS RTX 3060 + stock Arch `linux`, your pacstrap can include:
+
+    base
+    linux
+    mkinitcpio
+    e2fsprogs
+    dosfstools
+    amd-ucode
+    linux-firmware-realtek
+    nvidia-open
+
+You would NOT need to intentionally select Nouveau.
+
+Example:
+
+    pacstrap -K /mnt \
+        base \
+        linux \
+        mkinitcpio \
+        e2fsprogs \
+        dosfstools \
+        amd-ucode \
+        linux-firmware-realtek \
+        nvidia-open
+
+`nvidia-open` pulls the matching userspace driver dependency.
+
+You generally do not need `linux-firmware-nvidia` for the NVIDIA packaged
+driver stack, because nvidia-utils ships the firmware used by that driver.
+
+`linux-firmware-nvidia` is the generic Linux firmware bundle for NVIDIA
+hardware, particularly relevant to in-kernel drivers such as Nouveau/Nova.
+
+===============================================================================
+== 17. SWITCH CURRENT SYSTEM FROM NOUVEAU -> NVIDIA-OPEN ==
+===============================================================================
+
+DO THIS AS ITS OWN STAGE.
+
+Do not install dwl in the same operation.
+
+That way:
+
+    if graphics break
+
+you know:
+
+    driver transition caused it
+
+rather than wondering whether:
+
+    dwl
+    wlroots
+    driver
+    config.h
+
+was responsible.
+
+-------------------------------------------------------------------------------
+17.1 RECORD CURRENT STATE
+-------------------------------------------------------------------------------
+
+Before touching it:
+
+    lspci -k -d ::03xx
+    lsmod | grep -E 'nouveau|nvidia'
+    pacman -Q | grep -E 'nvidia|nouveau'
+    find /dev/dri -maxdepth 1 -type c -o -type l 2>/dev/null
+
+Save:
+
+    {
+        date
+        lspci -k -d ::03xx
+        lsmod | grep -E 'nouveau|nvidia' || true
+        pacman -Q | grep -E 'nvidia|nouveau' || true
+    } > ~/src/launch/notes/gpu-before-nvidia-open.txt
+
+Commit:
+
+    cd ~/src/launch
+    git add .
+    git commit -m "record pre nvidia-open gpu state"
+
+-------------------------------------------------------------------------------
+17.2 CREATE DRIVER INSTALL SCRIPT
+-------------------------------------------------------------------------------
+
+    cat > ~/src/launch/install/60-nvidia.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    (( EUID == 0 )) || {
+        echo "run as root"
+        exit 1
+    }
+
+    echo "Current GPU:"
+    lspci -k -d ::03xx || true
+
+    echo
+    echo "Transaction:"
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' nvidia-open
+
+    echo
+    pacman -Syu --needed nvidia-open
+
+    echo
+    echo "Rebuilding initramfs so the current boot image sees the new module"
+    echo "and the nouveau blacklist provided by nvidia-utils."
+    mkinitcpio -P
+
+    echo
+    echo "Reboot before judging the driver state."
+    EOF
+
+Make executable.
+
+Run:
+
+    su -
+    /home/lucky/src/launch/install/60-nvidia.sh
+    exit
+
+-------------------------------------------------------------------------------
+17.3 WHY NO MANUAL NOUVEAU UNINSTALL?
+-------------------------------------------------------------------------------
+
+Nouveau is primarily an in-kernel driver.
+
+It is not currently a package named:
+
+    nouveau
+
+that you remove with:
+
+    pacman -R nouveau
+
+The important current behavior is:
+
+    nvidia-utils installs a modprobe configuration that blacklists Nouveau.
+
+After reboot:
+
+    NVIDIA module should bind the GPU
+    Nouveau should not be loaded
+
+DO NOT create five redundant blacklist files unless the packaged configuration
+fails.
+
+Inspect the packaged rule later with:
+
+    pacman -Ql nvidia-utils | grep modprobe
+
+-------------------------------------------------------------------------------
+17.4 REBOOT
+-------------------------------------------------------------------------------
+
+    reboot
+
+After login:
+
+    lspci -k -d ::03xx
+
+You want:
+
+    Kernel driver in use: nvidia
+
+Check modules:
+
+    lsmod | grep '^nvidia'
+    lsmod | grep '^nouveau'
+
+Desired:
+
+    nvidia...
+        present
+
+    nouveau
+        absent
+
+Check NVIDIA:
+
+    nvidia-smi
+
+Check kernel-module license:
+
+    modinfo nvidia | grep '^license'
+
+For the open kernel module you should see a dual/open-style license rather than
+the proprietary-only kernel-module license.
+
+Check DRM modesetting:
+
+    cat /sys/module/nvidia_drm/parameters/modeset
+
+Modern Arch NVIDIA packages enable DRM KMS by default.
+
+Desired:
+
+    Y
+
+DO NOT add old internet guide flags such as:
+
+    nvidia_drm.modeset=1
+    GBM_BACKEND=nvidia-drm
+    WLR_NO_HARDWARE_CURSORS=1
+
+unless you have a CURRENT, SPECIFIC problem that actually requires them.
+
+Old NVIDIA/Wayland guides contain a lot of historical workarounds.
+
+-------------------------------------------------------------------------------
+17.5 NVIDIA HEALTH CHECKPOINT
+-------------------------------------------------------------------------------
+
+Create:
+
+    cat > ~/src/launch/health/40-nvidia.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -u
+
+    failures=0
+    warnings=0
+    pass() { printf '[PASS] %s\n' "$*"; }
+    warn() { printf '[WARN] %s\n' "$*"; warnings=$((warnings + 1)); }
+    fail() { printf '[FAIL] %s\n' "$*"; failures=$((failures + 1)); }
+
+    echo '=== NVIDIA HEALTH ==='
+
+    if pacman -Q nvidia-open >/dev/null 2>&1; then
+        pass "nvidia-open package installed"
+        pacman -Q nvidia-open
+    else
+        fail "nvidia-open package missing"
+    fi
+
+    if pacman -Q nvidia-utils >/dev/null 2>&1; then
+        pass "nvidia-utils installed"
+        pacman -Q nvidia-utils
+    else
+        fail "nvidia-utils missing"
+    fi
+
+    driver="$(lspci -k -d ::03xx 2>/dev/null || true)"
+    printf '%s\n' "$driver"
+
+    if grep -q 'Kernel driver in use: nvidia' <<<"$driver"; then
+        pass "GPU is bound to nvidia"
+    else
+        fail "GPU is not using nvidia"
+    fi
+
+    if lsmod | grep -q '^nouveau '; then
+        fail "nouveau is still loaded"
+    else
+        pass "nouveau is not loaded"
+    fi
+
+    if lsmod | grep -q '^nvidia '; then
+        pass "nvidia kernel module loaded"
+    else
+        fail "nvidia kernel module not loaded"
+    fi
+
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        if nvidia-smi >/dev/null 2>&1; then
+            pass "nvidia-smi communicates with GPU"
+            nvidia-smi
+        else
+            fail "nvidia-smi exists but cannot communicate with GPU"
+        fi
+    else
+        fail "nvidia-smi missing"
+    fi
+
+    if [[ -r /sys/module/nvidia_drm/parameters/modeset ]]; then
+        modeset="$(cat /sys/module/nvidia_drm/parameters/modeset)"
+        if [[ "$modeset" == "Y" ]]; then
+            pass "nvidia DRM modesetting enabled"
+        else
+            fail "nvidia DRM modesetting is not enabled: $modeset"
+        fi
+    else
+        fail "nvidia_drm modeset parameter unavailable"
+    fi
+
+    if [[ -d /dev/dri ]]; then
+        pass "/dev/dri exists"
+        ls -la /dev/dri
+    else
+        fail "/dev/dri missing"
+    fi
+
+    echo
+    printf 'RESULT: %d failure(s), %d warning(s)\n' "$failures" "$warnings"
+    (( failures == 0 ))
+    EOF
+
+Make executable:
+
+    chmod +x ~/src/launch/health/40-nvidia.sh
+
+Run:
+
+    ~/src/launch/health/40-nvidia.sh
+
+This is CHECKPOINT 4.
+
+DO NOT continue into dwl until this passes.
+
+-------------------------------------------------------------------------------
+17.6 CLEAN UP OLD NVIDIA FIRMWARE PACKAGE
+-------------------------------------------------------------------------------
+
+ONLY after the nvidia-open health check passes.
+
+Your original install explicitly contained:
+
+    linux-firmware-nvidia
+
+The packaged NVIDIA driver uses its own firmware from nvidia-utils.
+
+Check whether anything installed requires the generic firmware package:
+
+    pacman -Qi linux-firmware-nvidia | grep '^Required By'
+
+Also:
+
+    pactree -r linux-firmware-nvidia
+
+If `pactree` is not installed yet, the pacman metadata check is enough.
+
+If:
+    your NVIDIA GPU is now using nvidia-open
+AND:
+    no other installed package/hardware reason requires linux-firmware-nvidia
+
+remove it:
+
+    su -
+    pacman -Rns linux-firmware-nvidia
+    exit
+
+Then reboot one more time and rerun:
+
+    ~/src/launch/health/40-nvidia.sh
+
+WHY WAIT UNTIL AFTER SUCCESS?
+
+Never remove your known-working fallback pieces BEFORE verifying the replacement.
+
+===============================================================================
+== 18. WAYLAND / DWL DEPENDENCIES ==
+===============================================================================
+
+dwl is not a desktop environment.
+
+It is a small Wayland compositor based on wlroots.
+
+Conceptual graphics path:
+
+    RTX 3060
+        |
+        v
+    NVIDIA kernel driver
+        |
+        v
+    DRM / KMS
+        |
+        v
+    NVIDIA userspace GL/Vulkan stack
+        |
+        v
+    wlroots
+        |
+        v
+    dwl
+        |
+        v
+    Wayland clients such as foot
+
+Important components:
+
+    wayland
+        protocol libraries
+
+    wayland-protocols
+        XML protocol descriptions used at build time
+
+    libinput
+        keyboard/mouse/touchpad input handling
+
+    libxkbcommon
+        keyboard mapping
+
+    wlroots0.20
+        compositor building blocks
+
+Current dwl v0.9 is built for wlroots 0.20.
+
+-------------------------------------------------------------------------------
+18.1 INSTALL EXPLICIT MAJOR DEPS
+-------------------------------------------------------------------------------
+
+Create:
+
+    cat > ~/src/launch/install/70-wayland-dwl-deps.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    (( EUID == 0 )) || { echo "run as root"; exit 1; }
+
+    packages=(
+        wayland
+        wayland-protocols
+        libinput
+        libxkbcommon
+        wlroots0.20
+        polkit
+    )
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' "${packages[@]}"
+    pacman -Syu --needed "${packages[@]}"
+    EOF
+
+WHY POLKIT?
+
+dwl running directly from a VT interacts with your logind-managed user session
+and device access.
+
+Upstream dwl specifically documents polkit when using systemd-logind.
+
+You do NOT need a graphical polkit authentication agent merely to start dwl.
+
+WHY NOT XWAYLAND?
+
+Not needed yet.
+
+wlroots may pull some XCB libraries because wlroots itself supports optional X
+functionality.
+
+That does NOT mean you installed the `xorg-xwayland` server.
+
+Check later:
+
+    pacman -Q xorg-xwayland
+
+It should report that the package is not installed.
+
+===============================================================================
+== 19. FOOT BEFORE DWL ==
+===============================================================================
+
+You want one real graphical application ready the moment dwl starts.
+
+That application should be the terminal.
+
+Install:
+
+    ttf-dejavu
+    foot
+
+WHY A FONT PACKAGE?
+
+A terminal emulator needs an actual font to render text.
+
+Fontconfig is only a resolver.
+
+It does not magically provide glyphs.
+
+DejaVu gives us a compact, reliable monospace font family without a huge theme
+stack.
+
+Create:
+
+    cat > ~/src/launch/install/80-foot.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    (( EUID == 0 )) || { echo "run as root"; exit 1; }
+
+    packages=(
+        ttf-dejavu
+        foot
+    )
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' "${packages[@]}"
+    pacman -Syu --needed "${packages[@]}"
+    EOF
+
+-------------------------------------------------------------------------------
+19.1 FOOT CONFIG
+-------------------------------------------------------------------------------
+
+Create:
+
+    mkdir -p ~/src/launch/config/foot
+
+    cat > ~/src/launch/config/foot/foot.ini <<'EOF'
+    [main]
+    font=DejaVu Sans Mono:size=11
+    pad=4x4
+
+    [scrollback]
+    lines=10000
+    EOF
+
+Link:
+
+    mkdir -p ~/.config/foot
+    ln -s ~/src/launch/config/foot/foot.ini ~/.config/foot/foot.ini
+
+The terminal shell remains Bash.
+
+foot is NOT your shell.
+
+Relationship:
+
+    foot
+        displays a pseudo-terminal
+
+    bash
+        interprets commands
+
+    tmux
+        multiplexes pseudo-terminals
+
+Typical later path:
+
+    dwl
+        -> foot
+            -> tmux
+                -> bash
+
+===============================================================================
+== 20. BUILD DWL FROM RELEASE SOURCE ==
+===============================================================================
+
+We are deliberately NOT installing a random prebuilt dwl variant.
+
+We will:
+
+    clone upstream source
+    use stable release v0.9
+    inspect it
+    create config.h
+    run make
+    install only the binary
+
+Current upstream moved from GitHub to Codeberg.
+
+Canonical upstream:
+
+    codeberg.org/dwl/dwl
+
+Use release:
+
+    v0.9
+
+NOT:
+    development main
+    wlroots-next
+
+WHY RELEASE?
+
+Your objective is:
+    performant
+    stable
+    daily-drivable
+
+not:
+    chase wlroots Git changes
+
+-------------------------------------------------------------------------------
+20.1 CLONE
+-------------------------------------------------------------------------------
+
+Keep upstream source separate from your configuration repository:
+
+    cd ~/src
+
+    git clone \
+        --branch v0.9 \
+        --depth 1 \
+        https://codeberg.org/dwl/dwl.git \
+        dwl
+
+Enter:
+
+    cd ~/src/dwl
+
+Inspect:
+
+    git status
+    git log -1 --oneline
+    git tag --points-at HEAD
+
+-------------------------------------------------------------------------------
+20.2 INSPECT BEFORE BUILDING
+-------------------------------------------------------------------------------
+
+Read:
+
+    sed -n '1,220p' README.md
+    sed -n '1,220p' Makefile
+    sed -n '1,220p' config.mk
+    sed -n '1,260p' config.def.h
+
+Search:
+
+    rg 'PREFIX|CC|CFLAGS|wlroots|XWAYLAND' config.mk Makefile
+
+See what make wants to execute:
+
+    make -n
+
+Check pkg-config can resolve dependencies:
+
+    pkg-config --modversion wlroots-0.20
+    pkg-config --modversion wayland-server
+    pkg-config --modversion libinput
+    pkg-config --modversion xkbcommon
+
+If any of these fail:
+
+    STOP
+
+Do not brute-force random packages.
+
+Read the error and identify the missing development component.
+
+-------------------------------------------------------------------------------
+20.3 CREATE YOUR TRACKED CONFIG.H
+-------------------------------------------------------------------------------
+
+Upstream uses:
+
+    config.def.h
+        template
+
+    config.h
+        your actual compiled configuration
+
+Copy template into launch repo:
+
+    mkdir -p ~/src/launch/config/dwl
+    cp ~/src/dwl/config.def.h ~/src/launch/config/dwl/config.h
+
+Open:
+
+    nvim ~/src/launch/config/dwl/config.h
+
+Important current defaults include concepts such as:
+
+    MODKEY
+    termcmd
+    menucmd
+    keys[]
+    tags
+    layouts
+    rules
+
+-------------------------------------------------------------------------------
+20.4 SET SUPER AS MOD
+-------------------------------------------------------------------------------
+
+Find:
+
+    #define MODKEY ...
+
+For Windows/Super key, use:
+
+    #define MODKEY WLR_MODIFIER_LOGO
+
+WHY?
+
+`MODKEY` is just a C preprocessor macro.
+
+Every keybinding that references MODKEY then uses Super.
+
+-------------------------------------------------------------------------------
+20.5 TERMINAL COMMAND
+-------------------------------------------------------------------------------
+
+Current dwl already commonly uses:
+
+    foot
+
+as the terminal command.
+
+Make sure:
+
+    static const char *termcmd[] = { "foot", NULL };
+
+We are NOT installing a menu launcher.
+
+Therefore do not rely on the default menu keybinding.
+
+You can:
+    remove/comment the menu keybinding from keys[]
+OR:
+    simply not press it
+
+Better:
+    remove the binding so your config documents reality.
+
+Search:
+
+    rg 'menucmd|XKB_KEY_p' ~/src/launch/config/dwl/config.h
+
+-------------------------------------------------------------------------------
+20.6 MINIMUM KEYBINDINGS TO UNDERSTAND
+-------------------------------------------------------------------------------
+
+dwl is intentionally dwm-like.
+
+Typical useful concepts:
+
+    focusstack
+        select next/previous tiled window
+
+    tag
+        move a window to a tag
+
+    view
+        show a tag
+
+    setlayout
+        choose tiling layout
+
+    spawn
+        run a program
+
+    killclient
+        close selected client
+
+DO NOT replace the entire default key table blindly.
+
+Start from upstream.
+
+Change only what you understand.
+
+You specifically want at minimum:
+
+    Super + terminal key
+        spawn foot
+
+    keys for:
+        focus next/previous
+        move clients between tags
+        switch tags
+        close client
+
+Remember:
+
+    dwl tags are similar to dwm tags.
+
+They are not exactly a traditional "workspace object".
+
+A client can be on multiple tags.
+
+-------------------------------------------------------------------------------
+20.7 COPY CONFIG INTO BUILD TREE
+-------------------------------------------------------------------------------
+
+Before every build:
+
+    cp ~/src/launch/config/dwl/config.h ~/src/dwl/config.h
+
+Why copy?
+
+    upstream source remains a clone
+
+    tracked config remains in:
+        ~/src/launch
+
+If you delete ~/src/dwl and reclone, your config survives.
+
+-------------------------------------------------------------------------------
+20.8 BUILD
+-------------------------------------------------------------------------------
+
+    cd ~/src/dwl
+
+    make clean
+    cp ~/src/launch/config/dwl/config.h ./config.h
+    make
+
+If successful:
+
+    file ./dwl
+    ldd ./dwl
+
+`file` tells you what kind of executable it is.
+
+`ldd` shows shared libraries it will load.
+
+-------------------------------------------------------------------------------
+20.9 INSTALL ONLY THE BINARY
+-------------------------------------------------------------------------------
+
+We do NOT run:
+
+    make install
+
+because we intentionally do not need:
+    local dwl man page
+    display-manager session file
+
+Install only binary:
+
+    su -
+
+    install -Dm755 \
+        /home/lucky/src/dwl/dwl \
+        /usr/local/bin/dwl
+
+    exit
+
+Check:
+
+    command -v dwl
+    file /usr/local/bin/dwl
+
+Remove cleanly if needed:
+
+    su -
+    rm -f /usr/local/bin/dwl
+    exit
+
+That is the complete installation footprint from the source-built dwl itself.
+
+-------------------------------------------------------------------------------
+20.10 CREATE A REBUILD SCRIPT
+-------------------------------------------------------------------------------
+
+Now automate what you just learned:
+
+    cat > ~/src/launch/install/rebuild-dwl.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    SRC="$HOME/src/dwl"
+    CONFIG="$HOME/src/launch/config/dwl/config.h"
+
+    [[ -d "$SRC/.git" ]] || {
+        echo "missing dwl source at: $SRC"
+        exit 1
+    }
+
+    [[ -f "$CONFIG" ]] || {
+        echo "missing tracked config: $CONFIG"
+        exit 1
+    }
+
+    cd "$SRC"
+
+    make clean
+    cp "$CONFIG" ./config.h
+    make
+
+    echo
+    echo "Built:"
+    file ./dwl
+
+    echo
+    echo "Install with:"
+    echo "  su -"
+    echo "  install -Dm755 $SRC/dwl /usr/local/bin/dwl"
+    EOF
+
+This script deliberately does NOT become root itself.
+
+Build as normal user.
+
+Only the final binary copy needs root.
+
+===============================================================================
+== 21. START DWL FROM THE TTY ==
+===============================================================================
+
+Do NOT install a display manager.
+
+Log in normally on tty1.
+
+First set the desktop identity:
+
+    export XDG_CURRENT_DESKTOP=dwl
+    export XDG_SESSION_DESKTOP=dwl
+    export XDG_SESSION_TYPE=wayland
+
+Then:
+
+    dwl
+
+dwl takes control of the VT.
+
+Use your configured terminal keybinding.
+
+When foot opens:
+
+    echo "$WAYLAND_DISPLAY"
+    echo "$XDG_CURRENT_DESKTOP"
+    echo "$XDG_SESSION_TYPE"
+
+Expected concepts:
+
+    WAYLAND_DISPLAY
+        something like wayland-0
+
+    XDG_CURRENT_DESKTOP
+        dwl
+
+    XDG_SESSION_TYPE
+        wayland
+
+-------------------------------------------------------------------------------
+21.1 CREATE A SMALL START SCRIPT
+-------------------------------------------------------------------------------
+
+    cat > ~/src/launch/bin/start-dwl <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    export XDG_CURRENT_DESKTOP=dwl
+    export XDG_SESSION_DESKTOP=dwl
+    export XDG_SESSION_TYPE=wayland
+
+    exec dwl
+    EOF
+
+    chmod +x ~/src/launch/bin/start-dwl
+
+Use from TTY:
+
+    ~/src/launch/bin/start-dwl
+
+Do NOT auto-start it on login yet.
+
+Manually starting it is useful while you are still learning/debugging.
+
+===============================================================================
+== 22. DWL HEALTH CHECKPOINT ==
+===============================================================================
+
+Run this INSIDE a foot terminal within dwl.
+
+Create:
+
+    cat > ~/src/launch/health/50-dwl.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -u
+
+    failures=0
+    warnings=0
+    pass() { printf '[PASS] %s\n' "$*"; }
+    warn() { printf '[WARN] %s\n' "$*"; warnings=$((warnings + 1)); }
+    fail() { printf '[FAIL] %s\n' "$*"; failures=$((failures + 1)); }
+
+    echo '=== DWL / WAYLAND HEALTH ==='
+
+    if command -v dwl >/dev/null 2>&1; then
+        pass "dwl executable exists"
+        command -v dwl
+    else
+        fail "dwl executable missing"
+    fi
+
+    if pgrep -x dwl >/dev/null 2>&1; then
+        pass "dwl process is running"
+    else
+        fail "dwl process is not running"
+    fi
+
+    if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+        pass "WAYLAND_DISPLAY is set: $WAYLAND_DISPLAY"
+    else
+        fail "WAYLAND_DISPLAY is not set"
+    fi
+
+    if [[ "${XDG_SESSION_TYPE:-}" == "wayland" ]]; then
+        pass "XDG_SESSION_TYPE=wayland"
+    else
+        warn "XDG_SESSION_TYPE is '${XDG_SESSION_TYPE:-unset}'"
+    fi
+
+    if [[ "${XDG_CURRENT_DESKTOP:-}" == "dwl" ]]; then
+        pass "XDG_CURRENT_DESKTOP=dwl"
+    else
+        warn "XDG_CURRENT_DESKTOP is '${XDG_CURRENT_DESKTOP:-unset}'"
+    fi
+
+    if [[ -n "${WAYLAND_DISPLAY:-}" && -S "${XDG_RUNTIME_DIR:-}/$WAYLAND_DISPLAY" ]]; then
+        pass "Wayland socket exists"
+        ls -l "${XDG_RUNTIME_DIR}/$WAYLAND_DISPLAY"
+    else
+        fail "Wayland socket not found"
+    fi
+
+    if command -v foot >/dev/null 2>&1; then
+        pass "foot client exists"
+        foot --version
+    else
+        fail "foot missing"
+    fi
+
+    echo
+    printf 'RESULT: %d failure(s), %d warning(s)\n' "$failures" "$warnings"
+    (( failures == 0 ))
+    EOF
+
+Run inside dwl:
+
+    ~/src/launch/health/50-dwl.sh
+
+This is CHECKPOINT 5.
+
+===============================================================================
+== 23. AUDIO: MINIMAL DAILY-DRIVER STACK ==
+===============================================================================
+
+Linux audio layers:
+
+    hardware
+        |
+        v
+    kernel audio drivers
+        |
+        v
+    ALSA
+        |
+        v
+    PipeWire
+        |
+        v
+    WirePlumber
+        |
+        v
+    applications
+
+ALSA is the low-level kernel/userspace audio interface.
+
+PipeWire is the modern media graph/server.
+
+WirePlumber is the policy/session manager deciding how devices and streams are
+connected.
+
+For broad desktop application compatibility, install:
+
+    pipewire
+    pipewire-audio
+    pipewire-pulse
+    pipewire-alsa
+    wireplumber
+
+WHY pipewire-pulse?
+
+Many desktop applications speak the PulseAudio protocol.
+
+pipewire-pulse provides that protocol without running PulseAudio itself.
+
+WHY pipewire-alsa?
+
+Tiny package that routes ALSA-configured applications through PipeWire when
+appropriate.
+
+This costs almost nothing and avoids inconsistent "some apps bypass PipeWire"
+behavior.
+
+Create:
+
+    cat > ~/src/launch/install/90-audio.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    (( EUID == 0 )) || { echo "run as root"; exit 1; }
+
+    packages=(
+        pipewire
+        pipewire-audio
+        pipewire-pulse
+        pipewire-alsa
+        wireplumber
+    )
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' "${packages[@]}"
+    pacman -Syu --needed "${packages[@]}"
+    EOF
+
+After normal user login, systemd user activation normally starts these.
+
+Inspect:
+
+    systemctl --user status pipewire.service
+    systemctl --user status pipewire-pulse.service
+    systemctl --user status wireplumber.service
+
+Control:
+
+    wpctl status
+
+Volume:
+
+    wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+
+    wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
+
+Mute:
+
+    wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
+
+===============================================================================
+== 24. AUDIO HEALTH CHECKPOINT ==
+===============================================================================
+
+Create:
+
+    cat > ~/src/launch/health/60-audio.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -u
+
+    failures=0
+    warnings=0
+    pass() { printf '[PASS] %s\n' "$*"; }
+    warn() { printf '[WARN] %s\n' "$*"; warnings=$((warnings + 1)); }
+    fail() { printf '[FAIL] %s\n' "$*"; failures=$((failures + 1)); }
+
+    echo '=== AUDIO HEALTH ==='
+
+    for pkg in pipewire pipewire-audio pipewire-pulse pipewire-alsa wireplumber; do
+        if pacman -Q "$pkg" >/dev/null 2>&1; then
+            pass "$pkg installed"
+        else
+            fail "$pkg missing"
+        fi
+    done
+
+    for unit in pipewire.service pipewire-pulse.service wireplumber.service; do
+        if systemctl --user is-active --quiet "$unit"; then
+            pass "$unit active"
+        else
+            fail "$unit not active"
+            systemctl --user status "$unit" --no-pager 2>/dev/null || true
+        fi
+    done
+
+    if command -v wpctl >/dev/null 2>&1; then
+        if wpctl status >/dev/null 2>&1; then
+            pass "wpctl can query PipeWire"
+            wpctl status
+        else
+            fail "wpctl cannot query PipeWire"
+        fi
+    else
+        fail "wpctl missing"
+    fi
+
+    echo
+    printf 'RESULT: %d failure(s), %d warning(s)\n' "$failures" "$warnings"
+    (( failures == 0 ))
+    EOF
+
+Run as normal user:
+
+    ~/src/launch/health/60-audio.sh
+
+This is CHECKPOINT 6.
+
+===============================================================================
+== 25. DESKTOP PRIMITIVES -- ONLY WHAT YOU ASKED FOR ==
+===============================================================================
+
+No launcher.
+No bar.
+No file manager.
+
+Install exactly:
+
+    fnott
+        notification daemon
+
+    wl-clipboard
+        wl-copy / wl-paste
+
+    grim
+        screenshot image capture
+
+    slurp
+        interactive region selection
+
+Create:
+
+    cat > ~/src/launch/install/100-desktop-tools.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    (( EUID == 0 )) || { echo "run as root"; exit 1; }
+
+    packages=(
+        fnott
+        wl-clipboard
+        grim
+        slurp
+    )
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' "${packages[@]}"
+    pacman -Syu --needed "${packages[@]}"
+    EOF
+
+===============================================================================
+== 26. FNOTT ==
+===============================================================================
+
+fnott is a small Wayland notification daemon.
+
+Create config:
+
+    mkdir -p ~/src/launch/config/fnott
+
+    cat > ~/src/launch/config/fnott/fnott.ini <<'EOF'
+    anchor=top-right
+    edge-margin-vertical=10
+    edge-margin-horizontal=10
+    notification-margin=6
+
+    background=1e1e1eff
+    text-color=eeeeeeff
+    border-color=555555ff
+    border-size=1
+    EOF
+
+Link:
+
+    mkdir -p ~/.config/fnott
+    ln -s ~/src/launch/config/fnott/fnott.ini ~/.config/fnott/fnott.ini
+
+Run inside dwl:
+
+    fnott &
+
+Commands:
+
+    fnottctl list
+    fnottctl dismiss
+    fnottctl dismiss all
+    fnottctl pause
+    fnottctl unpause
+    fnottctl quit
+
+You do not need a GUI settings application.
+
+===============================================================================
+== 27. WAYLAND CLIPBOARD ==
+===============================================================================
+
+Copy literal text:
+
+    printf '%s' 'hello' | wl-copy
+
+Paste to stdout:
+
+    wl-paste
+
+Copy current path:
+
+    pwd | wl-copy
+
+Write clipboard to file:
+
+    wl-paste > file.txt
+
+Clipboard is a Wayland-session concept here.
+
+Do not expect wl-copy/wl-paste to work from a raw TTY outside a Wayland
+session.
+
+===============================================================================
+== 28. SCREENSHOTS ==
+===============================================================================
+
+Whole output:
+
+    grim ~/screenshot.png
+
+Interactively choose region:
+
+    grim -g "$(slurp)" ~/screenshot.png
+
+Screenshot region directly into clipboard:
+
+    grim -g "$(slurp)" - | wl-copy
+
+Create storage directory:
+
+    mkdir -p ~/Pictures/Screenshots
+
+Timestamped region:
+
+    grim -g "$(slurp)" \
+        "$HOME/Pictures/Screenshots/$(date +%Y-%m-%d_%H-%M-%S).png"
+
+Later put this into a tiny script rather than complex C string quoting in
+config.h.
+
+Create:
+
+    cat > ~/src/launch/bin/screenshot-region <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    dir="$HOME/Pictures/Screenshots"
+    mkdir -p "$dir"
+
+    geometry="$(slurp)"
+    file="$dir/$(date +%Y-%m-%d_%H-%M-%S).png"
+
+    grim -g "$geometry" "$file"
+
+    printf '%s\n' "$file"
+    EOF
+
+    chmod +x ~/src/launch/bin/screenshot-region
+
+Your dwl config can later spawn:
+
+    ~/src/launch/bin/screenshot-region
+
+===============================================================================
+== 29. DESKTOP PRIMITIVES HEALTH CHECKPOINT ==
+===============================================================================
+
+Run INSIDE dwl.
+
+Create:
+
+    cat > ~/src/launch/health/70-desktop-tools.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -u
+
+    failures=0
+    warnings=0
+    pass() { printf '[PASS] %s\n' "$*"; }
+    warn() { printf '[WARN] %s\n' "$*"; warnings=$((warnings + 1)); }
+    fail() { printf '[FAIL] %s\n' "$*"; failures=$((failures + 1)); }
+
+    echo '=== DESKTOP PRIMITIVES HEALTH ==='
+
+    if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
+        fail "not running inside a Wayland session"
+        printf 'RESULT: %d failure(s), %d warning(s)\n' "$failures" "$warnings"
+        exit 1
+    fi
+
+    for cmd in foot fnott fnottctl wl-copy wl-paste grim slurp; do
+        if command -v "$cmd" >/dev/null 2>&1; then
+            pass "$cmd exists"
+        else
+            fail "$cmd missing"
+        fi
+    done
+
+    if pgrep -x fnott >/dev/null 2>&1; then
+        pass "fnott daemon running"
+    else
+        warn "fnott is not currently running"
+    fi
+
+    token="launch-clipboard-health-$$"
+    printf '%s' "$token" | wl-copy
+
+    got="$(wl-paste 2>/dev/null || true)"
+    if [[ "$got" == "$token" ]]; then
+        pass "clipboard round-trip works"
+    else
+        fail "clipboard round-trip failed"
+    fi
+
+    tmp="$(mktemp --suffix=.png)"
+    if grim "$tmp" >/dev/null 2>&1 && [[ -s "$tmp" ]]; then
+        pass "grim captured a screenshot"
+        file "$tmp"
+    else
+        fail "grim screenshot failed"
+    fi
+    rm -f "$tmp"
+
+    echo
+    printf 'RESULT: %d failure(s), %d warning(s)\n' "$failures" "$warnings"
+    (( failures == 0 ))
+    EOF
+
+This is CHECKPOINT 7.
+
+===============================================================================
+== 30. START DWL SESSION SERVICES CLEANLY ==
+===============================================================================
+
+So far you manually launched:
+
+    fnott &
+
+Now create a session script.
+
+IMPORTANT DWL DETAIL:
+
+The program passed to:
+
+    dwl -s '...'
+
+receives dwl status information on stdin.
+
+If your script does not consume it, close stdin.
+
+Otherwise dwl can eventually block writing status output.
+
+Create:
+
+    cat > ~/src/launch/bin/dwl-session <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # dwl writes status information to this child's stdin.
+    # We do not use status information, so close it immediately.
+    exec <&-
+
+    # Export Wayland-session values to services launched by the user systemd
+    # manager / D-Bus activation.
+    dbus-update-activation-environment --systemd \
+        WAYLAND_DISPLAY \
+        XDG_CURRENT_DESKTOP \
+        XDG_SESSION_DESKTOP \
+        XDG_SESSION_TYPE
+
+    systemctl --user import-environment \
+        WAYLAND_DISPLAY \
+        XDG_CURRENT_DESKTOP \
+        XDG_SESSION_DESKTOP \
+        XDG_SESSION_TYPE
+
+    # Notification daemon.
+    fnott &
+
+    wait
+    EOF
+
+Why `wait`?
+
+dwl treats the `-s` program as its session child.
+
+We want this script to remain alive while its background children live.
+
+Update start script:
+
+    cat > ~/src/launch/bin/start-dwl <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    export XDG_CURRENT_DESKTOP=dwl
+    export XDG_SESSION_DESKTOP=dwl
+    export XDG_SESSION_TYPE=wayland
+
+    exec dwl -s "$HOME/src/launch/bin/dwl-session"
+    EOF
+
+Make executable:
+
+    chmod +x ~/src/launch/bin/{start-dwl,dwl-session}
+
+===============================================================================
+== 31. XDG DESKTOP PORTALS ==
+===============================================================================
+
+WHY PORTALS IF YOU HAVE NO DESKTOP ENVIRONMENT?
+
+Applications still need standard desktop integration for things such as:
+
+    screen sharing
+    screenshots
+    file selection
+
+A portal is a D-Bus API.
+
+Front-end:
+
+    xdg-desktop-portal
+
+asks specialized backend implementations to perform the operation.
+
+For wlroots screen sharing:
+
+    xdg-desktop-portal-wlr
+
+For your terminal file chooser:
+
+    xdg-desktop-portal-termfilechooser fork
+
+The route becomes:
+
+    application
+        |
+        v
+    xdg-desktop-portal
+        |
+        +-- ScreenCast/Screenshot
+        |      -> xdg-desktop-portal-wlr
+        |
+        `-- FileChooser
+               -> terminal FileChooser backend
+                    -> foot
+                         -> fd
+                         -> fzf
+
+===============================================================================
+== 32. INSTALL WLR PORTAL ==
+===============================================================================
+
+Create:
+
+    cat > ~/src/launch/install/110-portals.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    (( EUID == 0 )) || { echo "run as root"; exit 1; }
+
+    packages=(
+        xdg-desktop-portal
+        xdg-desktop-portal-wlr
+    )
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' "${packages[@]}"
+    pacman -Syu --needed "${packages[@]}"
+    EOF
+
+xdg-desktop-portal-wlr provides the wlroots screenshot/screencast interfaces.
+
+It does NOT provide a FileChooser.
+
+That is why we need a second specialized backend.
+
+===============================================================================
+== 33. TERMINAL FILE CHOOSER ==
+===============================================================================
+
+Current Arch ecosystem state:
+
+The maintained terminal FileChooser backend is distributed through the AUR
+rather than the official binary repositories.
+
+We intentionally do NOT install yay/paru.
+
+Why?
+
+You already have:
+    Git
+    base-devel
+    makepkg
+
+So learn the underlying Arch package build once.
+
+-------------------------------------------------------------------------------
+33.1 WHAT IS A PKGBUILD?
+-------------------------------------------------------------------------------
+
+A PKGBUILD is a shell recipe that tells makepkg:
+
+    package name
+    version
+    source URL
+    checksums
+    dependencies
+    build commands
+    packaging commands
+
+The AUR itself does NOT distribute trusted prebuilt packages.
+
+You download a build recipe.
+
+Therefore:
+
+    READ PKGBUILD BEFORE BUILDING.
+
+-------------------------------------------------------------------------------
+33.2 FETCH
+-------------------------------------------------------------------------------
+
+Keep AUR builds under:
+
+    ~/src/aur
+
+Create:
+
+    mkdir -p ~/src/aur
+    cd ~/src/aur
+
+Clone the maintained fork package:
+
+    git clone \
+        https://aur.archlinux.org/xdg-desktop-portal-termfilechooser-hunkyburrito-git.git
+
+Enter:
+
+    cd xdg-desktop-portal-termfilechooser-hunkyburrito-git
+
+Inspect:
+
+    sed -n '1,260p' PKGBUILD
+
+Quick key fields:
+
+    rg '^(pkgname|pkgver|depends|makedepends|source|build|package)' PKGBUILD
+
+Build/install AS NORMAL USER:
+
+    makepkg -si
+
+WHY NOT ROOT?
+
+makepkg intentionally refuses/should not be run as root for normal package
+building.
+
+It downloads and executes build recipes.
+
+Root should only be involved when pacman installs the resulting package.
+
+-------------------------------------------------------------------------------
+33.3 FIND ITS INSTALLED FILES
+-------------------------------------------------------------------------------
+
+Use:
+
+    pacman -Ql xdg-desktop-portal-termfilechooser-hunkyburrito-git
+
+Find examples/wrappers:
+
+    pacman -Ql xdg-desktop-portal-termfilechooser-hunkyburrito-git \
+        | grep -E 'fzf|config|wrapper'
+
+Use the installed wrapper path rather than guessing.
+
+-------------------------------------------------------------------------------
+33.4 CONFIGURE PORTAL ROUTING
+-------------------------------------------------------------------------------
+
+Create:
+
+    mkdir -p ~/src/launch/config/xdg-desktop-portal
+
+    cat > ~/src/launch/config/xdg-desktop-portal/portals.conf <<'EOF'
+    [preferred]
+    org.freedesktop.impl.portal.ScreenCast=wlr
+    org.freedesktop.impl.portal.Screenshot=wlr
+    org.freedesktop.impl.portal.FileChooser=termfilechooser
+    EOF
+
+Link:
+
+    mkdir -p ~/.config/xdg-desktop-portal
+    ln -s \
+        ~/src/launch/config/xdg-desktop-portal/portals.conf \
+        ~/.config/xdg-desktop-portal/portals.conf
+
+Configure termfilechooser under:
+
+    ~/.config/xdg-desktop-portal-termfilechooser/
+
+Use:
+
+    foot
+
+as terminal command.
+
+Use the package's installed fd/fzf wrapper.
+
+WHY NOT COPY AN OLD HARD-CODED WRAPPER FROM THIS GUIDE?
+
+The wrapper interface can change.
+
+You now know how to inspect package files, so use the installed current example.
+
+Core idea remains:
+
+    fd
+        generate candidate paths
+
+    fzf
+        interactively choose
+
+-------------------------------------------------------------------------------
+33.5 PORTAL ENVIRONMENT
+-------------------------------------------------------------------------------
+
+xdg-desktop-portal-wlr needs the compositor environment in your user
+systemd/D-Bus environment.
+
+That is why `dwl-session` runs:
+
+    dbus-update-activation-environment --systemd ...
+
+and:
+
+    systemctl --user import-environment ...
+
+After changing portal config:
+
+    systemctl --user restart xdg-desktop-portal.service
+
+The backend should then D-Bus-activate as required.
+
+===============================================================================
+== 34. PORTAL HEALTH CHECKPOINT ==
+===============================================================================
+
+Run inside dwl.
+
+Create:
+
+    cat > ~/src/launch/health/80-portals.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -u
+
+    failures=0
+    warnings=0
+    pass() { printf '[PASS] %s\n' "$*"; }
+    warn() { printf '[WARN] %s\n' "$*"; warnings=$((warnings + 1)); }
+    fail() { printf '[FAIL] %s\n' "$*"; failures=$((failures + 1)); }
+
+    echo '=== PORTAL HEALTH ==='
+
+    for pkg in xdg-desktop-portal xdg-desktop-portal-wlr; do
+        if pacman -Q "$pkg" >/dev/null 2>&1; then
+            pass "$pkg installed"
+        else
+            fail "$pkg missing"
+        fi
+    done
+
+    if pacman -Q xdg-desktop-portal-termfilechooser-hunkyburrito-git \
+        >/dev/null 2>&1
+    then
+        pass "terminal FileChooser backend installed"
+    else
+        fail "terminal FileChooser backend missing"
+    fi
+
+    if systemctl --user is-active --quiet xdg-desktop-portal.service; then
+        pass "xdg-desktop-portal active"
+    else
+        fail "xdg-desktop-portal inactive"
+    fi
+
+    if systemctl --user is-active --quiet xdg-desktop-portal-wlr.service; then
+        pass "xdg-desktop-portal-wlr active"
+    else
+        warn "wlr backend not currently active; it may D-Bus activate on demand"
+    fi
+
+    env_dump="$(systemctl --user show-environment 2>/dev/null || true)"
+
+    if grep -q '^WAYLAND_DISPLAY=' <<<"$env_dump"; then
+        pass "WAYLAND_DISPLAY imported into user systemd"
+    else
+        fail "WAYLAND_DISPLAY missing from user systemd environment"
+    fi
+
+    if grep -q '^XDG_CURRENT_DESKTOP=dwl$' <<<"$env_dump"; then
+        pass "XDG_CURRENT_DESKTOP=dwl imported"
+    else
+        fail "XDG_CURRENT_DESKTOP=dwl missing from user systemd environment"
+    fi
+
+    conf="$HOME/.config/xdg-desktop-portal/portals.conf"
+
+    if [[ -f "$conf" ]]; then
+        pass "portal routing config exists"
+        cat "$conf"
+    else
+        fail "portal routing config missing"
+    fi
+
+    echo
+    echo "--- portal logs ---"
+    journalctl --user \
+        -u xdg-desktop-portal.service \
+        -u xdg-desktop-portal-wlr.service \
+        -n 30 \
+        --no-pager 2>/dev/null || true
+
+    echo
+    printf 'RESULT: %d failure(s), %d warning(s)\n' "$failures" "$warnings"
+    (( failures == 0 ))
+    EOF
+
+This is CHECKPOINT 8.
+
+A full FileChooser end-to-end test ultimately requires an application that
+actually requests the XDG FileChooser portal.
+
+When you later install a browser, configure that browser to use the portal if
+it does not do so by default.
+
+===============================================================================
+== 35. NO XWAYLAND YET ==
+===============================================================================
+
+We intentionally do not install:
+
+    xorg-xwayland
+
+Check:
+
+    pacman -Q xorg-xwayland
+
+Expected now:
+
+    error: package 'xorg-xwayland' was not found
+
+Some X11-related libraries may still appear as dependencies of wlroots or other
+software.
+
+That does not mean an X server is running.
+
+When you eventually encounter a specific app that only supports X11:
+
+    then learn XWayland
+    then add it
+    then rebuild dwl with XWayland support
+
+Do not carry compatibility layers before you have a compatibility problem.
+
+===============================================================================
+== 36. NO LAUNCHER / NO STATUS BAR ==
+===============================================================================
+
+No fuzzel.
+
+No wmenu.
+
+No Waybar.
+
+No yambar.
+
+No somebar.
+
+You can launch from:
+
+    foot
+
+or from explicit dwl keybindings.
+
+This keeps the first graphical environment brutally simple:
+
+    dwl
+        +-- foot
+        +-- fnott
+        +-- clipboard
+        +-- screenshots
+        +-- audio
+        `-- portals
+
+Later, when you actually feel the pain of app launching or lack of system
+status, add exactly one tool for that job.
+
+===============================================================================
+== 37. DWL KEYBIND CONFIGURATION METHOD ==
+===============================================================================
+
+dwl configuration is C source included during compilation.
+
+This is one of the reasons you chose it.
+
+Workflow:
+
+    nvim ~/src/launch/config/dwl/config.h
+
+    ~/src/launch/install/rebuild-dwl.sh
+
+    su -
+    install -Dm755 /home/lucky/src/dwl/dwl /usr/local/bin/dwl
+    exit
+
+    leave current dwl session
+    start it again
+
+There is no magical runtime reload.
+
+You changed compiled configuration.
+
+-------------------------------------------------------------------------------
+37.1 UNDERSTAND A KEY ENTRY
+-------------------------------------------------------------------------------
+
+Typical shape:
+
+    {
+        MODIFIER,
+        XKB_KEY_KEY,
+        function,
+        argument
+    }
+
+Example conceptually:
+
+    {
+        MODKEY|WLR_MODIFIER_SHIFT,
+        XKB_KEY_Return,
+        spawn,
+        {.v = termcmd}
+    }
+
+Read it as:
+
+    When:
+        MODKEY + Shift + Return
+
+    call:
+        spawn()
+
+    with:
+        termcmd
+
+The syntax:
+
+    MODKEY | WLR_MODIFIER_SHIFT
+
+uses C bitwise OR to combine modifier flags.
+
+-------------------------------------------------------------------------------
+37.2 ADD COMMANDS THROUGH SHELL SCRIPTS WHEN QUOTING GETS UGLY
+-------------------------------------------------------------------------------
+
+Bad direction:
+
+    write giant shell one-liners inside config.h
+
+Better:
+
+    create:
+        ~/src/launch/bin/screenshot-region
+
+then spawn that file.
+
+This gives:
+
+    simple C config
+    simple shell script
+    easy independent testing
+
+-------------------------------------------------------------------------------
+37.3 KEYBIND PHILOSOPHY
+-------------------------------------------------------------------------------
+
+Start with:
+
+    terminal
+    next/previous focus
+    move between tags
+    select tags
+    close client
+    layouts
+    screenshot
+
+Do not add 50 bindings because a dotfiles repo has them.
+
+Every binding should correspond to something you actually do.
+
+===============================================================================
+== 38. DAILY TTY / DWL DEVELOPMENT WORKFLOW ==
+===============================================================================
+
+TTY workflow:
+
+    login
+    tmux attach -t main
+
+If no session:
+
+    tmux new -s main
+
+Within tmux:
+
+    window 1:
+        nvim ~/src/launch
+
+    window 2:
+        shell / build
+
+    window 3:
+        health scripts / logs
+
+Later inside dwl:
+
+    Super+terminal
+        -> foot
+
+then:
+
+    tmux attach -t main
+
+Your work environment is the same.
+
+===============================================================================
+== 39. COMMANDS ADDED BY MAJOR COMPONENT ==
+===============================================================================
+
+CORE / BASE
+-----------
+
+    bash
+    cat
+    cp
+    mv
+    rm
+    mkdir
+    ln
+    chmod
+    chown
+    grep
+    sed
+    awk
+    find
+    xargs
+    ps
+    top
+    kill
+    pgrep
+    pkill
+    ip
+    ss
+    ping
+    lsblk
+    findmnt
+    mount
+    umount
+    blkid
+    fdisk
+    lspci
+    lsusb
+    lsmod
+    modprobe
+    dmesg
+
+SYSTEMD
+-------
+
+    systemctl
+    journalctl
+    networkctl
+    resolvectl
+    timedatectl
+    loginctl
+    udevadm
+    busctl
+    bootctl
+    systemd-analyze
+    systemd-cgls
+    systemd-cgtop
+
+PACMAN
+------
+
+    pacman
+    makepkg
+
+GIT
+---
+
+    git
+
+OPENSSH
+-------
+
+    ssh
+    scp
+    sftp
+    ssh-keygen
+
+TMUX
+----
+
+    tmux
+
+NEOVIM
+------
+
+    nvim
+
+SHELL TOOLS
+-----------
+
+    rg
+    fd
+    fzf
+
+BUILD TOOLCHAIN
+---------------
+
+    cc
+    gcc
+    make
+    pkg-config
+    ld
+    readelf
+    objdump
+    nm
+    patch
+
+NVIDIA
+------
+
+    nvidia-smi
+    nvidia-modprobe
+    nvidia-bug-report.sh
+
+DWL
+---
+
+    dwl
+
+FOOT
+----
+
+    foot
+
+AUDIO
+-----
+
+    pipewire
+    pw-cli
+    pw-top
+    wireplumber
+    wpctl
+
+FNOTT
+-----
+
+    fnott
+    fnottctl
+
+CLIPBOARD
+---------
+
+    wl-copy
+    wl-paste
+
+SCREENSHOT
+----------
+
+    grim
+    slurp
+
+===============================================================================
+== 40. FILESYSTEM CHEAT TABLE ==
+===============================================================================
+
+    /
+        entire filesystem root
+
+    /boot
+        EFI/systemd-boot/kernel/initramfs for this machine
+
+    /dev
+        device nodes
+
+    /etc
+        system-wide configuration
+
+    /home/lucky
+        your user home
+
+    /proc
+        process + kernel virtual filesystem
+
+    /run
+        runtime state
+
+    /sys
+        devices/kernel virtual filesystem
+
+    /tmp
+        temporary files
+
+    /usr/bin
+        distribution-managed commands
+
+    /usr/lib
+        libraries/system components
+
+    /usr/local/bin
+        locally installed commands not owned by pacman
+
+    ~/.config
+        user config
+
+    ~/.cache
+        disposable user cache
+
+    ~/.local
+        user-local data
+
+    ~/src
+        source/projects
+
+    ~/src/launch
+        your system setup repo
+
+    ~/src/dwl
+        upstream dwl source
+
+    ~/src/aur
+        manually inspected AUR build recipes
+
+===============================================================================
+== 41. BASH / SHELL CHEAT TABLE ==
+===============================================================================
+
+NAVIGATION:
+
+    pwd
+    ls
+    ls -la
+    cd PATH
+    cd ..
+    cd -
+    cd
+
+FILES:
+
+    touch FILE
+    mkdir DIR
+    mkdir -p A/B/C
+    cp A B
+    cp -r A B
+    mv A B
+    rm FILE
+    rm -r DIR
+    ln -s TARGET LINK
+    readlink LINK
+    stat PATH
+    file PATH
+
+READ:
+
+    cat FILE
+    less FILE
+    head -n 50 FILE
+    tail -n 50 FILE
+    tail -f FILE
+
+SEARCH:
+
+    grep PATTERN FILE
+    grep -n PATTERN FILE
+    grep -i PATTERN FILE
+    grep -r PATTERN DIR
+
+    rg PATTERN
+    fd NAME
+
+PIPES:
+
+    A | B
+
+REDIRECTION:
+
+    CMD > file
+    CMD >> file
+    CMD 2> file
+    CMD > file 2>&1
+    CMD < file
+
+VARIABLE:
+
+    name="value"
+    echo "$name"
+
+ENVIRONMENT:
+
+    export NAME="value"
+
+COMMAND SUBSTITUTION:
+
+    kernel="$(uname -r)"
+
+CONDITION:
+
+    if [[ -f "$file" ]]; then
+        echo yes
+    fi
+
+ROOT:
+
+    su -
+    exit
+
+EXIT STATUS:
+
+    echo "$?"
+
+===============================================================================
+== 42. GREP / SED / AWK QUICK MODEL ==
+===============================================================================
+
+grep:
+
+    FIND matching lines.
+
+Example:
+
+    grep -ni 'nvidia' "$GUIDE"
+
+sed:
+
+    PRINT or TRANSFORM a text stream.
+
+Example:
+
+    sed -n '200,260p' "$GUIDE"
+
+Replace:
+
+    sed -i 's/old/new/' file
+
+awk:
+
+    PROCESS records/fields with logic/state.
+
+Example:
+
+    awk '{print $1}' file
+
+Mental model:
+
+    grep:
+        "which lines?"
+
+    sed:
+        "print/change these lines"
+
+    awk:
+        "interpret/process these records"
+
+===============================================================================
+== 43. PACKAGE AUDITING ==
+===============================================================================
+
+Explicit packages:
+
+    pacman -Qe
+
+Dependencies:
+
+    pacman -Qd
+
+Search installed:
+
+    pacman -Qs TERM
+
+Repo info:
+
+    pacman -Si PACKAGE
+
+Installed info:
+
+    pacman -Qi PACKAGE
+
+Files owned by package:
+
+    pacman -Ql PACKAGE
+
+Who owns a file:
+
+    pacman -Qo FILE
+
+Orphan dependencies:
+
+    pacman -Qdt
+
+Before removing an orphan list blindly:
+
+    inspect it
+
+Then remove a specific thing only when you understand why it is no longer
+required.
+
+===============================================================================
+== 44. SERVICE / PROCESS AUDITING ==
+===============================================================================
+
+Running system services:
+
+    systemctl --type=service --state=running
+
+Enabled system services:
+
+    systemctl list-unit-files --state=enabled
+
+Running user services:
+
+    systemctl --user --type=service --state=running
+
+Enabled user services:
+
+    systemctl --user list-unit-files --state=enabled
+
+Processes by RAM:
+
+    ps aux --sort=-%mem | head -n 30
+
+Processes by CPU:
+
+    ps aux --sort=-%cpu | head -n 30
+
+Who owns executable:
+
+    exe="$(command -v COMMAND)"
+    pacman -Qo "$exe"
+
+If command is under /usr/local:
+
+    pacman may correctly say:
+        no package owns it
+
+because YOU installed it.
+
+Example:
+
+    /usr/local/bin/dwl
+
+===============================================================================
+== 45. LOGGING / DEBUGGING HABITS ==
+===============================================================================
+
+Current boot:
+
+    journalctl -b
+
+Warnings and worse:
+
+    journalctl -b -p warning
+
+Specific system service:
+
+    journalctl -u SERVICE
+
+Specific user service:
+
+    journalctl --user -u SERVICE
+
+Follow live:
+
+    journalctl -f
+
+If dwl fails to start:
+
+Run from TTY and capture stderr/stdout:
+
+    ~/src/launch/bin/start-dwl > ~/dwl.log 2>&1
+
+Then:
+
+    sed -n '1,240p' ~/dwl.log
+
+Do NOT immediately add random environment variables from forum posts.
+
+Read the actual error first.
+
+===============================================================================
+== 46. FINAL HEALTH AUDIT ==
+===============================================================================
+
+Each component test remains independent.
+
+Run all manually when you WANT a full audit:
+
+    ~/src/launch/health/00-boot.sh
+    ~/src/launch/health/10-network.sh
+    ~/src/launch/health/20-git.sh
+    ~/src/launch/health/30-tty-dev.sh
+    ~/src/launch/health/40-nvidia.sh
+
+Inside dwl:
+
+    ~/src/launch/health/50-dwl.sh
+    ~/src/launch/health/60-audio.sh
+    ~/src/launch/health/70-desktop-tools.sh
+    ~/src/launch/health/80-portals.sh
+
+Do not create one giant script that causes:
+
+    "audio failed"
+
+to imply:
+
+    "boot failed"
+
+They are separate layers.
+
+===============================================================================
+== 47. SAVING A HEALTH REPORT ==
+===============================================================================
+
+Capture one component:
+
+    ~/src/launch/health/40-nvidia.sh \
+        | tee ~/nvidia-health.txt
+
+Capture stderr too:
+
+    ~/src/launch/health/40-nvidia.sh \
+        2>&1 \
+        | tee ~/nvidia-health.txt
+
+Inspect:
+
+    cat ~/nvidia-health.txt
+
+-------------------------------------------------------------------------------
+47.1 ENCRYPT BEFORE SHARING
+-------------------------------------------------------------------------------
+
+OpenSSL is already present through the base dependency stack.
+
+Safer than putting a password directly in shell history:
+
+    openssl enc \
+        -aes-256-cbc \
+        -pbkdf2 \
+        -salt \
+        -a \
+        -in ~/nvidia-health.txt \
+        -out ~/nvidia-health.txt.enc
+
+It will prompt for the encryption password.
+
+Decrypt:
+
+    openssl enc \
+        -d \
+        -aes-256-cbc \
+        -pbkdf2 \
+        -a \
+        -in ~/nvidia-health.txt.enc \
+        -out ~/nvidia-health.txt
+
+Avoid:
+
+    -pass pass:SECRET
+
+in interactive shell history unless you deliberately accept that exposure.
+
+===============================================================================
+== 48. NO LOCAL MANUAL/DOC POLICY ==
+===============================================================================
+
+You intentionally do not want documentation packages.
+
+Do not install:
+
+    man-db
+    man-pages
+    texinfo
+    *-docs packages
+
+Your pacman NoExtract policy should continue to exclude common local docs.
+
+Inspect:
+
+    pacman-conf NoExtract
+
+Expected categories include paths like:
+
+    usr/share/man/*
+    usr/share/doc/*
+    usr/share/info/*
+    usr/share/gtk-doc/*
+    usr/share/help/*
+
+DO NOT broadly exclude:
+
+    usr/share/*
+
+Real runtime files live there.
+
+Examples:
+
+    Wayland sessions
+    MIME data
+    desktop files
+    icons
+    schemas
+    fonts
+    protocol data
+
+Minimalism should not break applications.
+
+===============================================================================
+== 49. FUTURE REINSTALL -- RECOMMENDED PACSTRAP FOR THIS MACHINE ==
+===============================================================================
+
+This is here so the next reinstall starts closer to your now-known final base.
+
+For THIS machine:
+
+    base
+    linux
+    mkinitcpio
+    e2fsprogs
+    dosfstools
+    amd-ucode
+    linux-firmware-realtek
+    nvidia-open
+
+If wired Ethernet remains your network:
+
+    no iwd
+    no NetworkManager
+
+Example:
+
+    pacstrap -K /mnt \
+        base \
+        linux \
+        mkinitcpio \
+        e2fsprogs \
+        dosfstools \
+        amd-ucode \
+        linux-firmware-realtek \
+        nvidia-open
+
+WHY NOT linux-firmware-nvidia?
+
+For your selected NVIDIA packaged driver, nvidia-utils supplies the driver
+firmware it needs.
+
+WHY NO GIT?
+
+Git belongs to your post-boot deliberate tool layer.
+
+WHY NO EDITOR?
+
+Neovim belongs to your post-boot deliberate TTY-development layer.
+
+WHY NO SUDO?
+
+Base already gives:
+    su
+
+You can make a privilege-elevation choice later when you have a need.
+
+===============================================================================
+== 50. CHECKPOINT ORDER ==
+===============================================================================
+
+CHECKPOINT 0:
+    BOOT
+
+    script:
+        health/00-boot.sh
+
+    proves:
+        kernel + systemd + filesystems + systemd-boot basics
+
+
+CHECKPOINT 1:
+    NETWORK
+
+    script:
+        health/10-network.sh
+
+    proves:
+        networkd + resolved + route + DNS
+
+
+CHECKPOINT 2:
+    GIT / GITHUB
+
+    script:
+        health/20-git.sh
+
+    proves:
+        git + ssh + local repo + GitHub auth
+
+
+CHECKPOINT 3:
+    TTY DEVELOPMENT
+
+    script:
+        health/30-tty-dev.sh
+
+    proves:
+        tmux + Neovim configs work
+
+
+CHECKPOINT 4:
+    NVIDIA
+
+    script:
+        health/40-nvidia.sh
+
+    proves:
+        nvidia-open owns RTX 3060
+        Nouveau is gone
+        DRM KMS works
+
+
+CHECKPOINT 5:
+    DWL
+
+    script:
+        health/50-dwl.sh
+
+    proves:
+        dwl is a real Wayland session
+        Wayland socket exists
+        foot can be used
+
+
+CHECKPOINT 6:
+    AUDIO
+
+    script:
+        health/60-audio.sh
+
+    proves:
+        PipeWire + WirePlumber
+
+
+CHECKPOINT 7:
+    DESKTOP PRIMITIVES
+
+    script:
+        health/70-desktop-tools.sh
+
+    proves:
+        fnott
+        Wayland clipboard
+        grim screenshot
+
+
+CHECKPOINT 8:
+    PORTALS
+
+    script:
+        health/80-portals.sh
+
+    proves:
+        xdg portal stack
+        wlr backend
+        terminal FileChooser backend configuration
+
+
+NO CHECKPOINT DEPENDS ON ANOTHER SCRIPT.
+
+They naturally run in the environment appropriate for the component.
+
+===============================================================================
+== 51. THE BUILD / INSTALL LOOP FOR DWL CHANGES ==
+===============================================================================
+
+Every dwl config change:
+
+1. Edit tracked config:
+
+    nvim ~/src/launch/config/dwl/config.h
+
+2. Diff:
+
+    cd ~/src/launch
+    git diff
+
+3. Commit meaningful config:
+
+    git add config/dwl/config.h
+    git commit -m "adjust dwl keybindings"
+
+4. Build:
+
+    ~/src/launch/install/rebuild-dwl.sh
+
+5. Install binary:
+
+    su -
+    install -Dm755 /home/lucky/src/dwl/dwl /usr/local/bin/dwl
+    exit
+
+6. Exit current dwl.
+
+7. Restart:
+
+    ~/src/launch/bin/start-dwl
+
+8. If broken:
+
+    revert config:
+
+        git restore config/dwl/config.h
+
+    rebuild
+
+This is a much nicer recovery model than blindly editing system files.
+
+===============================================================================
+== 52. UPDATE DWL SAFELY ==
+===============================================================================
+
+Do not keep tracking development `main` automatically.
+
+You intentionally cloned:
+
+    v0.9
+
+When a future stable dwl release appears:
+
+1. Read release changes on your phone/browser.
+
+2. Back up/commit Launch:
+
+    cd ~/src/launch
+    git status
+    git add .
+    git commit -m "before dwl update"
+
+3. Fetch upstream:
+
+    cd ~/src/dwl
+    git fetch --tags
+
+4. Check available versions:
+
+    git tag --sort=-version:refname | head
+
+5. Switch to the stable tag you deliberately chose.
+
+6. Compare:
+
+    config.def.h
+
+against your tracked:
+
+    ~/src/launch/config/dwl/config.h
+
+Because C configuration structures can change between releases.
+
+Do NOT blindly copy an old config.h over a new major source version and assume
+it compiles.
+
+Rebase your changes conceptually onto the new config.def.h.
+
+That process itself teaches you the source changes.
+
+===============================================================================
+== 53. PERFORMANCE MODEL ==
+===============================================================================
+
+The chosen stack is already small.
+
+Performance wins that matter:
+
+    correct NVIDIA driver
+
+    DRM/KMS working
+
+    no unnecessary compositor effects
+        dwl intentionally has none
+
+    no desktop shell
+
+    no display manager
+
+    no permanent launcher
+
+    no status bar
+
+    no file manager daemon
+
+    no unnecessary Electron apps
+
+    few autostarts
+
+    correct audio stack
+
+    only necessary services
+
+Things NOT worth obsessing over:
+
+    saving 200 KB while making the system harder to repair
+
+    manually deleting shared libraries
+
+    breaking package ownership
+
+    removing base packages
+
+    package count as a benchmark
+
+Measure:
+
+    free -h
+
+    ps aux --sort=-%mem | head
+
+    ps aux --sort=-%cpu | head
+
+    systemd-analyze
+
+    systemd-analyze blame
+
+===============================================================================
+== 54. FINAL TARGET STATE ==
+===============================================================================
+
+BOOT:
+
+    UEFI
+        -> systemd-boot
+            -> Linux
+                -> systemd
+                    -> TTY
+
+NETWORK:
+
+    systemd-networkd
+    systemd-resolved
+    systemd-timesyncd
+
+DEVELOPMENT:
+
+    Bash
+    Git
+    OpenSSH
+    tmux
+    Neovim
+    ripgrep
+    fd
+    fzf
+
+GPU:
+
+    RTX 3060
+        -> nvidia-open kernel modules
+        -> nvidia-utils userspace
+        -> DRM/KMS
+
+GRAPHICS:
+
+    Wayland
+    wlroots0.20
+    dwl v0.9
+
+TERMINAL:
+
+    foot
+
+NOTIFICATIONS:
+
+    fnott
+
+CLIPBOARD:
+
+    wl-clipboard
+
+SCREENSHOTS:
+
+    grim
+    slurp
+
+AUDIO:
+
+    PipeWire
+    PipeWire audio support
+    PipeWire PulseAudio compatibility
+    PipeWire ALSA config
+    WirePlumber
+
+PORTALS:
+
+    xdg-desktop-portal
+    xdg-desktop-portal-wlr
+    terminal FileChooser backend
+        -> foot
+        -> fd
+        -> fzf
+
+ABSENT ON PURPOSE:
+
+    Hyprland
+    XWayland
+    app launcher
+    status bar
+    graphical file manager
+    desktop environment
+    display manager
+    wallpaper daemon
+    GUI audio mixer
+    GUI network manager
+    GUI settings center
+    local docs/manual database
+    Neovim plugin framework
+    AUR helper
+
+===============================================================================
+== 55. YOUR NORMAL LEARNING LOOP ==
+===============================================================================
+
+Every time you want something new:
+
+1. Define the missing capability.
+
+2. Find the smallest tool that solves it.
+
+3. Ask:
+       Is it a major concept worth understanding?
+
+4. Inspect:
+       pacman -Si
+       pacman -Sp
+       package files
+       upstream README/source
+
+5. Write the install script.
+
+6. Commit it.
+
+7. Install.
+
+8. Learn the commands it added.
+
+9. Add a SMALL config.
+
+10. Add an INDEPENDENT health check if the subsystem matters.
+
+11. Commit.
+
+12. Push.
+
+This keeps your Linux system both:
+
+    minimal
+
+and:
+
+    understandable
+
+===============================================================================
+== 56. CURRENT FACTS VERIFIED FOR THIS GUIDE ==
+===============================================================================
+
+These are time-sensitive and were checked for the 2026-10-04 guide snapshot.
+
+NVIDIA:
+
+    Current Arch provides `nvidia-open` for the stock `linux` kernel.
+
+    Current NVIDIA upstream recommends the open kernel-module flavor on GPUs
+    that support it.
+
+    RTX 3060 / Ampere is supported.
+
+    `nvidia-open` depends on `nvidia-utils`.
+
+    `nvidia-utils` blacklists Nouveau on reboot.
+
+    DRM KMS defaults enabled on modern current NVIDIA Arch drivers.
+
+DWL:
+
+    Upstream development moved to Codeberg.
+
+    Current stable release is v0.9 in this guide snapshot.
+
+    v0.9 targets wlroots 0.20.
+
+    dwl configuration is compiled through config.h.
+
+    XWayland support is optional and is not enabled here.
+
+ARCH WLROOTS:
+
+    Current Arch package:
+        wlroots0.20
+
+PORTALS:
+
+    xdg-desktop-portal-wlr is in Arch official repositories.
+
+    It provides wlroots screenshot/screencast portal functionality.
+
+    It does NOT provide FileChooser.
+
+    The terminal FileChooser backend used here is built from the maintained AUR
+    fork.
+
+AUDIO:
+
+    WirePlumber is the PipeWire policy/session manager.
+
+    pipewire-pulse provides PulseAudio-protocol compatibility using PipeWire.
+
+Because Arch is rolling release software:
+
+    if you read this guide months later,
+    package names/versions/upstream recommendations may have changed.
+
+Before major driver/compositor upgrades:
+
+    verify current Arch package metadata
+    and current upstream release notes.
+
+===============================================================================
+== 57. QUICK INDEX ==
+===============================================================================
+
+GUIDE TABLE OF CONTENTS:
+
+    grep -n '^== ' "$GUIDE"
+
+SEARCH GUIDE:
+
+    grep -ni 'TERM' "$GUIDE"
+
+READ RANGE:
+
+    sed -n 'START,ENDp' "$GUIDE"
+
+BOOT HEALTH:
+
+    ~/src/launch/health/00-boot.sh
+
+NETWORK HEALTH:
+
+    ~/src/launch/health/10-network.sh
+
+GIT HEALTH:
+
+    ~/src/launch/health/20-git.sh
+
+TTY DEV HEALTH:
+
+    ~/src/launch/health/30-tty-dev.sh
+
+NVIDIA HEALTH:
+
+    ~/src/launch/health/40-nvidia.sh
+
+DWL HEALTH:
+
+    ~/src/launch/health/50-dwl.sh
+
+AUDIO HEALTH:
+
+    ~/src/launch/health/60-audio.sh
+
+DESKTOP TOOLS HEALTH:
+
+    ~/src/launch/health/70-desktop-tools.sh
+
+PORTAL HEALTH:
+
+    ~/src/launch/health/80-portals.sh
+
+START TMUX:
+
+    tmux new -s main
+
+REATTACH TMUX:
+
+    tmux attach -t main
+
+OPEN LAUNCH REPO:
+
+    nvim ~/src/launch
+
+BUILD DWL:
+
+    ~/src/launch/install/rebuild-dwl.sh
+
+START DWL:
+
+    ~/src/launch/bin/start-dwl
+
+GPU:
+
+    nvidia-smi
+    lspci -k -d ::03xx
+    cat /sys/module/nvidia_drm/parameters/modeset
+
+AUDIO:
+
+    wpctl status
+
+CLIPBOARD:
+
+    printf '%s' hello | wl-copy
+    wl-paste
+
+SCREENSHOT:
+
+    grim -g "$(slurp)" screenshot.png
+
+PACKAGE EXPLICIT LIST:
+
+    pacman -Qe
+
+FAILED SYSTEM SERVICES:
+
+    systemctl --failed
+
+FAILED USER SERVICES:
+
+    systemctl --user --failed
+
+===============================================================================
+== END ==
+===============================================================================
+
+Immediate next order from your CURRENT machine:
+
+    1. Fix resolv.conf.
+    2. Fix /boot permissions.
+    3. Run boot health.
+    4. Run network health.
+    5. Set up ~/src/launch.
+    6. Install Git + OpenSSH.
+    7. Connect GitHub.
+    8. Install/configure tmux.
+    9. Install/configure Neovim.
+   10. Install rg/fd/fzf.
+   11. Learn/install base-devel.
+   12. Switch RTX 3060 from Nouveau to nvidia-open.
+   13. Run NVIDIA health and remove now-unused linux-firmware-nvidia.
+   14. Install Wayland/wlroots/dwl dependencies.
+   15. Install foot + font.
+   16. Clone stable dwl source.
+   17. Learn/configure config.h.
+   18. Build dwl with make.
+   19. Start dwl manually from TTY.
+   20. Verify dwl health.
+   21. Add PipeWire/WirePlumber audio.
+   22. Add fnott / clipboard / screenshots.
+   23. Add portals.
+   24. Add terminal fd+fzf FileChooser.
+   25. Stop and daily-drive this before adding anything else.
+
+The machine should feel like a set of components you understand,
+not a preassembled "Linux desktop".

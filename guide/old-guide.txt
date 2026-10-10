@@ -1,0 +1,3502 @@
+--------------------------LSKgWjcNome1hyZBQn0Px6
+Content-Disposition: form-data; name="file"; filename="minimal_arch_hyprland_field_guide.txt"
+Content-Type: text/plain
+
+MINIMAL ARCH -> LEAN HYPRLAND FIELD GUIDE
+=============================================
+Verified against Arch/Hyprland state on 2026-10-02.
+
+GOAL
+----
+Build Arch from the smallest practical supported base, understand each major
+tool you intentionally add, automate each stage with simple Bash scripts, and
+end with a fast daily-drivable Hyprland system.
+
+Final desktop idea:
+
+    TTY login
+        -> start-hyprland
+        -> Hyprland
+           |- foot                 terminal
+           |- fuzzel               app launcher
+           |- mako                 notifications
+           |- wl-clipboard         clipboard primitives
+           |- cliphist             OPTIONAL clipboard history
+           |- grim + slurp         screenshots / region selection
+           |- PipeWire             media graph / audio server
+           |- WirePlumber          PipeWire policy/session manager
+           |- xdg-desktop-portal
+           |- xdg-desktop-portal-hyprland
+           |- terminal FileChooser portal using fd + fzf
+           |- Waybar               OPTIONAL status bar
+           |- Neovim               first/only text editor in this guide
+
+Deliberately NOT installed by this guide:
+    - desktop environment
+    - graphical login/display manager
+    - graphical file manager
+    - Nano/Vim/Emacs before Neovim
+    - NetworkManager
+    - dhcpcd
+    - PulseAudio daemon
+    - graphical package manager
+    - AUR helper such as yay/paru
+    - man-db / man-pages / texinfo
+    - separate documentation packages
+    - wallpaper program unless you later decide you want one
+
+IMPORTANT IDEA
+--------------
+"Minimal" does NOT mean literally two packages.
+
+Arch's supported minimum is the `base` metapackage. It pulls fundamental
+userspace such as:
+
+    systemd
+    pacman
+    bash
+    coreutils
+    glibc
+    grep
+    sed
+    findutils
+    util-linux
+    iproute2
+    iputils
+    procps-ng
+    shadow
+    tar/gzip/xz
+    ...
+
+Those are the floor. Do not try to individually remove random base
+dependencies.
+
+Your learning rule is:
+
+    LOW-LEVEL LIBRARY DEPENDENCY
+        Let pacman resolve it.
+
+    MAJOR TOOL / DAEMON / COMMAND / SUBSYSTEM
+        Add it deliberately.
+        Know why it exists.
+        Prefer giving it its own install script/stage.
+
+Examples worth deliberately learning:
+    git, ssh, systemd-networkd, iwd, pactree, strace, lsof, fd, fzf, rg,
+    jq, gcc, make, binutils, Neovim, Wayland, PipeWire, WirePlumber,
+    Hyprland, XDG portals, grim, slurp, wl-copy/wl-paste.
+
+===============================================================================
+== 00. HOW TO READ THIS FILE WITHOUT INSTALLING ANYTHING ==
+===============================================================================
+
+Everything here is already available from Arch `base`.
+
+Assume:
+
+    GUIDE=~/src/launch/guide/arch-field-guide.txt
+
+During the ISO you may instead use:
+
+    GUIDE=/root/guide.txt
+
+Show the section headings:
+
+    grep -n '^== ' "$GUIDE"
+
+Find text:
+
+    grep -n -i 'github' "$GUIDE"
+    grep -n -i 'pipewire' "$GUIDE"
+    grep -n -i 'hyprland' "$GUIDE"
+
+Read lines 200 through 280:
+
+    sed -n '200,280p' "$GUIDE"
+
+Read first/last lines:
+
+    head -n 80 "$GUIDE"
+    tail -n 80 "$GUIDE"
+
+Dump the whole file:
+
+    cat "$GUIDE"
+
+Useful pattern:
+
+    grep -n -i 'TERM' "$GUIDE"
+
+Suppose it says line 640:
+
+    sed -n '620,680p' "$GUIDE"
+
+That is enough to navigate this guide. `less` is intentionally not required.
+
+===============================================================================
+== 01. COPY THIS GUIDE INTO THE ARCH ISO ENVIRONMENT ==
+===============================================================================
+
+Put this TXT file on any USB/storage partition the Arch ISO can read.
+
+In the live ISO:
+
+    lsblk -f
+
+Identify the partition containing this file VERY CAREFULLY.
+
+Example only:
+
+    mkdir -p /run/guide-usb
+    mount /dev/sdX1 /run/guide-usb
+
+Find the guide:
+
+    find /run/guide-usb -maxdepth 3 -type f -iname '*arch*guide*.txt' -print
+
+Copy it into the live environment:
+
+    cp /run/guide-usb/path/to/arch-field-guide.txt /root/guide.txt
+
+Test:
+
+    grep -n '^== ' /root/guide.txt
+
+After your target root filesystem has been mounted at /mnt, preserve another
+copy inside the new system:
+
+    install -Dm644 /root/guide.txt /mnt/root/guide.txt
+
+Later, after creating your normal user and ~/src/launch:
+
+    mkdir -p ~/src/launch/guide
+    cp /root/guide.txt ~/src/launch/guide/arch-field-guide.txt
+
+If copying as root for another user:
+
+    chown -R YOURUSER:YOURUSER /home/YOURUSER/src
+
+===============================================================================
+== 02. FIRST BASH SKILL: WRITE SCRIPTS WITHOUT AN EDITOR ==
+===============================================================================
+
+You do NOT need Nano just to create files.
+
+Create a file with a heredoc:
+
+    cat > hello.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    echo "hello"
+    EOF
+
+Make it executable:
+
+    chmod +x hello.sh
+
+Run it:
+
+    ./hello.sh
+
+Inspect it:
+
+    cat hello.sh
+
+Append one line:
+
+    printf '%s\n' 'echo "another line"' >> hello.sh
+
+Replace text:
+
+    sed -i 's/another line/replaced line/' hello.sh
+
+THIS is how the first Launch installation scripts will be written.
+
+Recommended local repo:
+
+    ~/src/launch
+
+Initial layout:
+
+    mkdir -p ~/src/launch/{install,config,lib,guide,notes}
+
+Eventually:
+
+    ~/src/launch/
+    |-- install/
+    |   |-- 10-git-ssh.sh
+    |   |-- 20-package-tools.sh
+    |   |-- 30-shell-tools.sh
+    |   |-- 40-gpu.sh
+    |   |-- 50-audio.sh
+    |   |-- 60-hyprland.sh
+    |   |-- 70-desktop-tools.sh
+    |   |-- 80-portals.sh
+    |   `-- 90-neovim.sh
+    |-- config/
+    |   |-- hypr/
+    |   |-- foot/
+    |   |-- fuzzel/
+    |   |-- mako/
+    |   `-- waybar/
+    |-- lib/
+    |   `-- common.sh
+    |-- guide/
+    |   `-- arch-field-guide.txt
+    `-- notes/
+
+Keep scripts boring.
+
+Example install script:
+
+    cat > ~/src/launch/install/example.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if (( EUID != 0 )); then
+        echo "run this stage as root"
+        exit 1
+    fi
+
+    pacman -S --needed PACKAGE_NAME
+    EOF
+
+Do not build a giant framework yet.
+
+===============================================================================
+== 03. ARCH INSTALLATION TARGET ==
+===============================================================================
+
+Assumptions for this guide:
+
+    - x86_64 PC
+    - UEFI firmware
+    - simple ext4 root
+    - systemd-boot
+    - no disk encryption initially
+    - no LVM
+    - no Btrfs
+    - no graphical login manager
+
+Why:
+    Learn the normal Linux pieces first.
+    Add storage/encryption complexity later if you want it.
+
+TARGET END OF BASE INSTALL:
+
+    UEFI
+      -> systemd-boot
+      -> Linux kernel + mkinitcpio initramfs
+      -> systemd
+      -> TTY login
+      -> systemd-networkd (+ iwd only if Wi-Fi)
+      -> pacman works
+
+No GUI yet.
+
+===============================================================================
+== 04. LIVE ISO: VERIFY ENVIRONMENT ==
+===============================================================================
+
+Check UEFI:
+
+    test -d /sys/firmware/efi/efivars && echo UEFI || echo NOT-UEFI
+
+Clock:
+
+    timedatectl
+
+Storage:
+
+    lsblk -o NAME,SIZE,FSTYPE,TYPE,MOUNTPOINTS,MODEL
+
+PCI hardware:
+
+    lspci -k
+
+Network links:
+
+    ip link
+
+Internet test:
+
+    ping -c 3 archlinux.org
+
+The Arch ISO already contains tools that are NOT necessarily going into your
+installed system. Using a tool from the ISO does not mean you installed it.
+
+===============================================================================
+== 05. LIVE ISO NETWORK ==
+===============================================================================
+
+ETHERNET
+--------
+
+Usually just plug it in.
+
+Check:
+
+    ip addr
+    ping -c 3 archlinux.org
+
+
+WI-FI
+-----
+
+The Arch ISO has iwd tooling.
+
+Start interactive control:
+
+    iwctl
+
+Inside iwctl:
+
+    device list
+    station DEVICE scan
+    station DEVICE get-networks
+    station DEVICE connect "SSID"
+    exit
+
+Then:
+
+    ping -c 3 archlinux.org
+
+You will decide later whether the installed system needs the `iwd` package.
+
+===============================================================================
+== 06. PARTITIONING ==
+===============================================================================
+
+DANGER:
+    This is the destructive part.
+    NEVER blindly paste device names from an example.
+
+Inspect:
+
+    lsblk -f
+    fdisk -l
+
+A simple fresh-disk layout:
+
+    GPT
+    |- 1 GiB EFI System Partition   FAT32   -> /boot
+    `- remaining root partition     ext4    -> /
+
+If dual booting:
+    - DO NOT format an existing Windows ESP.
+    - Reuse it only if you intentionally want to and it has enough space.
+    - A separate ~1 GiB Arch ESP is often simpler for experimentation.
+    - Windows can remain independently bootable through UEFI firmware.
+
+Open partition editor:
+
+    fdisk /dev/nvme0n1
+
+Useful fdisk keys:
+
+    p       print table
+    g       create GPT (DESTROYS existing partition table)
+    n       new partition
+    t       change partition type
+    d       delete partition
+    w       write changes
+    q       quit without writing
+
+Re-check after partitioning:
+
+    lsblk -f
+
+EXAMPLE names only:
+
+    ESP=/dev/nvme0n1p1
+    ROOT=/dev/nvme0n1p2
+
+Format ONLY newly-created partitions:
+
+    mkfs.fat -F 32 "$ESP"
+    mkfs.ext4 "$ROOT"
+
+Mount:
+
+    mount "$ROOT" /mnt
+    mount --mkdir "$ESP" /mnt/boot
+
+Verify:
+
+    findmnt /mnt
+    findmnt /mnt/boot
+
+===============================================================================
+== 07. REMOVE NORMAL DOCUMENTATION FROM PACKAGE EXTRACTION ==
+===============================================================================
+
+You said you do not want local manuals/docs.
+
+Do NOT install:
+
+    man-db
+    man-pages
+    texinfo
+
+Many ordinary packages still contain files under /usr/share/man or
+/usr/share/doc. Pacman supports `NoExtract`, so prevent common documentation
+trees from being written in the first place.
+
+Create a temporary minimal pacman config in the ISO:
+
+    cp /etc/pacman.conf /root/pacman-min.conf
+
+Insert the rule immediately after [options]:
+
+    sed -i '/^\[options\]/a NoExtract = usr/share/man/* usr/share/doc/* usr/share/info/* usr/share/gtk-doc/* usr/share/help/*' /root/pacman-min.conf
+
+Verify:
+
+    grep -n 'NoExtract' /root/pacman-min.conf
+
+This intentionally DOES NOT remove:
+    /usr/share/licenses
+
+Licenses are tiny and package/legal metadata.
+
+Do not start inventing broad wildcards such as deleting all /usr/share.
+Applications keep real runtime data there.
+
+===============================================================================
+== 08. CHOOSE ONLY NEEDED FIRMWARE + MICROCODE ==
+===============================================================================
+
+DO NOT automatically install the giant `linux-firmware` metapackage if your
+goal is learning/minimalism.
+
+Inspect hardware:
+
+    lspci -k
+
+CPU:
+
+    grep -m1 'vendor_id' /proc/cpuinfo
+
+Choose ONE CPU microcode package:
+
+    AMD:
+        amd-ucode
+
+    Intel:
+        intel-ucode
+
+Common firmware packages:
+
+    AMD GPU:
+        linux-firmware-amdgpu
+
+    Intel devices:
+        linux-firmware-intel
+
+    NVIDIA GPU firmware:
+        linux-firmware-nvidia
+
+    Realtek Wi-Fi/Bluetooth/NIC:
+        linux-firmware-realtek
+
+Other vendors have their own split firmware packages.
+
+If you are unsure, start broad enough to boot, then narrow later.
+Do not sacrifice a bootable machine for a few MB.
+
+===============================================================================
+== 09. PACSTRAP: THE MINIMAL PRACTICAL BASE ==
+===============================================================================
+
+For ext4 + FAT ESP:
+
+    base
+    linux
+    mkinitcpio
+    e2fsprogs
+    dosfstools
+    CPU_MICROCODE
+    NEEDED_FIRMWARE...
+
+Example AMD machine with AMD GPU + Realtek network:
+
+    pacstrap -C /root/pacman-min.conf -K /mnt \
+        base \
+        linux \
+        mkinitcpio \
+        e2fsprogs \
+        dosfstools \
+        amd-ucode \
+        linux-firmware-amdgpu \
+        linux-firmware-realtek
+
+Example Intel CPU/device machine:
+
+    pacstrap -C /root/pacman-min.conf -K /mnt \
+        base \
+        linux \
+        mkinitcpio \
+        e2fsprogs \
+        dosfstools \
+        intel-ucode \
+        linux-firmware-intel
+
+If installed system requires Wi-Fi, add:
+
+        iwd
+
+If wired Ethernet is sufficient, DO NOT add a network manager.
+
+Copy your minimal pacman config into the installed system:
+
+    cp /root/pacman-min.conf /mnt/etc/pacman.conf
+
+Why mkinitcpio explicitly?
+    The kernel needs an initramfs provider.
+    Stating it explicitly records your decision instead of hiding it.
+
+Why e2fsprogs?
+    Userspace tools/checker for the ext4 root filesystem.
+
+Why dosfstools?
+    FAT utilities/checker for the EFI partition.
+
+What NOT to add yet:
+
+    git
+    openssh
+    sudo
+    nano
+    vim
+    neovim
+    networkmanager
+    pipewire
+    hyprland
+    waybar
+
+Those come as deliberate learning stages.
+
+===============================================================================
+== 10. FSTAB + CHROOT ==
+===============================================================================
+
+Generate fstab:
+
+    genfstab -U /mnt >> /mnt/etc/fstab
+
+Inspect it:
+
+    cat /mnt/etc/fstab
+
+Enter installed system:
+
+    arch-chroot /mnt
+
+Now:
+
+    pwd
+    ls /
+    cat /etc/pacman.conf | grep NoExtract
+
+===============================================================================
+== 11. BASIC SYSTEM CONFIG WITHOUT AN EDITOR ==
+===============================================================================
+
+TIMEZONE
+--------
+
+Replace with your zone:
+
+    ln -sf /usr/share/zoneinfo/Asia/Kolkata /etc/localtime
+    hwclock --systohc
+
+LOCALE
+------
+
+Enable en_US.UTF-8:
+
+    sed -i 's/^#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+    locale-gen
+    printf '%s\n' 'LANG=en_US.UTF-8' > /etc/locale.conf
+
+HOSTNAME
+--------
+
+Example:
+
+    printf '%s\n' 'archbox' > /etc/hostname
+
+ROOT PASSWORD
+-------------
+
+    passwd
+
+NORMAL USER
+-----------
+
+Replace `lucky` if desired:
+
+    useradd -m -G wheel -s /bin/bash lucky
+    passwd lucky
+
+Why wheel already?
+    Later tools such as polkit commonly treat wheel as an administrator group.
+    Nothing is automatically elevated just because you joined wheel.
+
+No sudo yet.
+
+===============================================================================
+== 12. NETWORK: SYSTEMD FIRST ==
+===============================================================================
+
+systemd already gives you:
+
+    systemd-networkd
+    systemd-resolved
+    systemd-timesyncd
+
+No NetworkManager required.
+
+
+WIRED DHCP
+----------
+
+Create:
+
+    mkdir -p /etc/systemd/network
+
+    cat > /etc/systemd/network/20-wired.network <<'EOF'
+    [Match]
+    Name=en*
+
+    [Network]
+    DHCP=yes
+    EOF
+
+
+WI-FI LINK + SYSTEMD DHCP
+-------------------------
+
+Only if `iwd` is installed:
+
+    cat > /etc/systemd/network/25-wireless.network <<'EOF'
+    [Match]
+    Name=wl*
+
+    [Network]
+    DHCP=yes
+    EOF
+
+
+DNS
+---
+
+Use systemd-resolved:
+
+    ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+
+
+ENABLE
+------
+
+    systemctl enable systemd-networkd.service
+    systemctl enable systemd-resolved.service
+    systemctl enable systemd-timesyncd.service
+
+Wi-Fi only:
+
+    systemctl enable iwd.service
+
+
+Useful commands after boot:
+
+    networkctl
+    networkctl status
+    resolvectl
+    resolvectl status
+    ip addr
+    ip route
+    ss -tulpn
+    ping -c 3 archlinux.org
+
+Wi-Fi:
+
+    iwctl
+    iwctl device list
+    iwctl station DEVICE get-networks
+    iwctl station DEVICE connect SSID
+
+===============================================================================
+== 13. BOOT: SYSTEMD-BOOT ==
+===============================================================================
+
+No GRUB package required.
+
+systemd already contains:
+
+    bootctl
+    systemd-boot EFI binary
+
+Install:
+
+    bootctl install
+
+Create loader config:
+
+    mkdir -p /boot/loader/entries
+
+    cat > /boot/loader/loader.conf <<'EOF'
+    default arch.conf
+    timeout 2
+    editor no
+    EOF
+
+Get ROOT filesystem UUID:
+
+    blkid
+
+Create entry, replacing ROOT_UUID:
+
+    cat > /boot/loader/entries/arch.conf <<'EOF'
+    title   Arch Linux
+    linux   /vmlinuz-linux
+    initrd  /initramfs-linux.img
+    options root=UUID=ROOT_UUID rw
+    EOF
+
+Then replace:
+
+    sed -i 's/ROOT_UUID/YOUR-ACTUAL-UUID/' /boot/loader/entries/arch.conf
+
+Modern mkinitcpio can pack CPU microcode into the main initramfs through its
+`microcode` hook.
+
+Check hooks:
+
+    grep '^HOOKS=' /etc/mkinitcpio.conf
+
+Make sure `microcode` exists in HOOKS. If needed, change the line with sed.
+
+Regenerate:
+
+    mkinitcpio -P
+
+Confirm boot files:
+
+    ls -lh /boot
+
+Inspect boot config:
+
+    bootctl list
+
+===============================================================================
+== 14. FINISH BASE INSTALL ==
+===============================================================================
+
+Before leaving chroot:
+
+    systemctl list-unit-files --state=enabled
+
+Exit:
+
+    exit
+
+Unmount:
+
+    umount -R /mnt
+
+Reboot:
+
+    reboot
+
+Remove installation media when appropriate.
+
+TARGET:
+    systemd-boot -> Arch -> TTY login.
+
+===============================================================================
+== 15. FIRST BOOT: VERIFY THE MINIMAL SYSTEM ==
+===============================================================================
+
+Login as your normal user.
+
+Basic:
+
+    whoami
+    pwd
+    uname -a
+    cat /etc/os-release
+
+Packages explicitly installed:
+
+    pacman -Qe
+
+Packages installed as dependencies:
+
+    pacman -Qd
+
+Services:
+
+    systemctl --type=service --state=running
+    systemctl list-unit-files --state=enabled
+
+Processes:
+
+    ps aux
+    top
+
+Storage:
+
+    lsblk -f
+    findmnt
+    df -h
+    du -sh PATH
+
+Hardware:
+
+    lspci -k
+    lsusb
+    lsmod
+    dmesg | tail -n 100
+
+Network:
+
+    networkctl
+    ip addr
+    ip route
+    ss -tulpn
+    resolvectl
+
+Logs:
+
+    journalctl -b
+    journalctl -b -p warning
+
+If Wi-Fi:
+
+    iwctl
+
+At this point your meaningful user-facing installed stack should still be tiny.
+
+===============================================================================
+== 16. CREATE THE LOCAL LAUNCH REPO BEFORE INSTALLING AN EDITOR ==
+===============================================================================
+
+As your normal user:
+
+    mkdir -p ~/src/launch/{install,config,lib,guide,notes}
+
+If the guide is still in /root, root must copy it because your user cannot read
+/root by default:
+
+    su -
+    install -Dm644 /root/guide.txt /home/lucky/src/launch/guide/arch-field-guide.txt
+    chown -R lucky:lucky /home/lucky/src/launch
+    exit
+
+Set:
+
+    GUIDE=~/src/launch/guide/arch-field-guide.txt
+
+Test:
+
+    grep -n '^== ' "$GUIDE"
+
+Create a README without an editor:
+
+    cat > ~/src/launch/README.txt <<'EOF'
+    launch
+
+    My Arch Linux installation/configuration scripts.
+
+    Rule:
+    Every explicit package and enabled service should have a reason.
+    EOF
+
+===============================================================================
+== 17. PACKAGE TRANSPARENCY HABIT ==
+===============================================================================
+
+Before installing an important package:
+
+1. Read package metadata:
+
+    pacman -Si PACKAGE
+
+2. Preview the transaction WITHOUT installing:
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' PACKAGE
+
+3. Search package database:
+
+    pacman -Ss SEARCH
+
+4. After installation, list files:
+
+    pacman -Ql PACKAGE
+
+5. Find which installed package owns a file:
+
+    pacman -Qo /usr/bin/COMMAND
+
+6. Explicit packages:
+
+    pacman -Qe
+
+7. Dependency packages:
+
+    pacman -Qd
+
+8. Orphans:
+
+    pacman -Qdt
+
+Do NOT use:
+
+    pacman -Sdd
+    pacman --nodeps
+
+Dependencies exist for a reason.
+
+Your goal is visibility, not breaking dependency resolution.
+
+===============================================================================
+== 18. FIRST INSTALL SCRIPT: GIT + OPENSSH ==
+===============================================================================
+
+This is deliberately very early.
+
+Create script as normal user:
+
+    cat > ~/src/launch/install/10-git-ssh.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if (( EUID != 0 )); then
+        echo "run as root"
+        exit 1
+    fi
+
+    echo "Transaction preview:"
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' git openssh
+
+    pacman -Syu --needed git openssh
+    EOF
+
+    chmod +x ~/src/launch/install/10-git-ssh.sh
+
+Read it:
+
+    cat ~/src/launch/install/10-git-ssh.sh
+
+Run as root:
+
+    su -
+    /home/lucky/src/launch/install/10-git-ssh.sh
+    exit
+
+Why these:
+
+    git
+        Version control. Your entire system setup becomes history you can diff,
+        revert, branch and move to another machine.
+
+    openssh
+        Provides ssh/scp/ssh-keygen and gives Git an SSH transport to GitHub.
+
+===============================================================================
+== 19. GIT + GITHUB SSH CONNECTION ==
+===============================================================================
+
+As normal user.
+
+Configure identity:
+
+    git config --global user.name "YOUR NAME"
+    git config --global user.email "YOUR_EMAIL"
+
+Inspect:
+
+    git config --global --list
+
+Generate modern SSH key:
+
+    ssh-keygen -t ed25519 -C "YOUR_EMAIL"
+
+Default path is normally:
+
+    ~/.ssh/id_ed25519
+    ~/.ssh/id_ed25519.pub
+
+NEVER SHARE:
+    ~/.ssh/id_ed25519
+
+PUBLIC KEY IS SAFE TO SHARE:
+
+    cat ~/.ssh/id_ed25519.pub
+
+On your phone/browser:
+    GitHub
+    -> Settings
+    -> SSH and GPG keys
+    -> New SSH key
+    -> paste the .pub contents
+
+Test:
+
+    ssh -T git@github.com
+
+Initialize Launch repo:
+
+    cd ~/src/launch
+    git init -b main
+    git add .
+    git commit -m "bootstrap launch"
+
+Create an EMPTY repository called `launch` on GitHub.
+
+Add SSH remote:
+
+    git remote add origin git@github.com:YOUR_GITHUB_USERNAME/launch.git
+
+Check:
+
+    git remote -v
+
+Push:
+
+    git push -u origin main
+
+Daily Git loop:
+
+    git status
+    git diff
+    git add PATH
+    git commit -m "message"
+    git push
+
+Useful recovery/view commands:
+
+    git log --oneline --graph --decorate -20
+    git diff HEAD
+    git restore FILE
+    git switch BRANCH
+    git switch -c NEW_BRANCH
+
+===============================================================================
+== 20. PACKAGE INTROSPECTION TOOLS ==
+===============================================================================
+
+Install these early because they help you understand later installs.
+
+Create:
+
+    cat > ~/src/launch/install/20-package-tools.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    (( EUID == 0 )) || { echo "run as root"; exit 1; }
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' \
+        pacman-contrib pkgfile
+
+    pacman -S --needed pacman-contrib pkgfile
+    pkgfile --update
+    EOF
+
+    chmod +x ~/src/launch/install/20-package-tools.sh
+
+Run as root.
+
+What you gain:
+
+    pactree PACKAGE
+        Visual dependency tree.
+
+    pactree -r PACKAGE
+        Reverse dependency tree: who needs this?
+
+    paccache -d
+        Show what package-cache cleanup would remove.
+
+    paccache -r
+        Keep recent cached package versions, remove older ones.
+
+    pkgfile COMMAND_OR_PATH
+        Find repository packages containing a path.
+
+Useful examples:
+
+    pactree hyprland
+    pactree -d 1 hyprland
+    pactree -r libinput
+
+    pkgfile -b nvim
+    pkgfile -b start-hyprland
+
+These are ideal for your "why is this here?" workflow.
+
+===============================================================================
+== 21. BASH + FILESYSTEM CHEAT SHEET ==
+===============================================================================
+
+PATHS
+-----
+
+    /               filesystem root
+    ~               current user's home
+    .               current directory
+    ..              parent directory
+    -               previous directory (with cd)
+    ./file           file relative to current directory
+    /path/file       absolute path
+
+Important Linux paths:
+
+    /boot            bootloader/kernel/initramfs in this setup
+    /dev             device nodes
+    /etc             system configuration
+    /home            user homes
+    /proc            process/kernel virtual filesystem
+    /root            root user's home
+    /run             runtime state
+    /sys             kernel/device virtual filesystem
+    /tmp             temporary files
+    /usr/bin         most commands
+    /usr/lib         libraries + system components
+    /usr/share       architecture-independent package data
+    /var             logs/cache/mutable service data
+    ~/.config        per-user application config
+    ~/.local         per-user data/programs
+    ~/.cache         disposable per-user cache
+    ~/src            this guide's source/project directory
+
+
+NAVIGATION
+----------
+
+    pwd                         where am I
+    ls                          list
+    ls -la                      include hidden + details
+    ls -lh                      human sizes
+    cd PATH                     change directory
+    cd                          home
+    cd ..                       parent
+    cd -                        previous directory
+    find PATH -name PATTERN     recursive file search
+
+
+FILES
+-----
+
+    touch FILE                  create/update timestamp
+    mkdir DIR                   create directory
+    mkdir -p A/B/C              create parent chain
+    cp A B                      copy
+    cp -r A B                   recursive copy
+    mv A B                      move/rename
+    rm FILE                     delete file
+    rm -r DIR                   recursive delete
+    ln -s TARGET LINK           symlink
+    readlink LINK               see symlink target
+    file PATH                   identify file type
+    stat PATH                   detailed metadata
+
+
+READ / SEARCH
+-------------
+
+    cat FILE
+    head -n 50 FILE
+    tail -n 50 FILE
+    tail -f FILE                follow growing log
+    grep PATTERN FILE
+    grep -n PATTERN FILE        line numbers
+    grep -r PATTERN DIR         recursive
+    sed -n '20,80p' FILE        print line range
+    wc -l FILE                  line count
+
+
+REDIRECTION / PIPES
+-------------------
+
+    CMD > file                  stdout -> replace file
+    CMD >> file                 stdout -> append file
+    CMD 2> file                 stderr -> file
+    CMD > file 2>&1             stdout + stderr -> file
+    A | B                       A's stdout becomes B's stdin
+    CMD < file                  file becomes stdin
+
+Examples:
+
+    ps aux | grep pipewire
+    journalctl -b | grep -i error
+    printf '%s\n' hello > file.txt
+
+
+BASH VARIABLES
+--------------
+
+    name="value"
+    echo "$name"
+
+Environment variable:
+
+    export NAME="value"
+
+Command substitution:
+
+    kernel="$(uname -r)"
+    echo "$kernel"
+
+Default value:
+
+    value="${VALUE:-default}"
+
+Arguments:
+
+    $0      script name
+    $1      first argument
+    $2      second
+    "$@"    all arguments safely
+
+
+CONDITIONS
+----------
+
+    if [[ -f "$file" ]]; then
+        echo exists
+    fi
+
+Common tests:
+
+    -f FILE     regular file
+    -d DIR      directory
+    -e PATH     exists
+    -L PATH     symlink
+    -n "$x"     non-empty
+    -z "$x"     empty
+
+Numeric:
+
+    (( value > 3 ))
+
+Root check:
+
+    (( EUID == 0 ))
+
+
+LOOPS
+-----
+
+    for item in one two three; do
+        echo "$item"
+    done
+
+    while read -r line; do
+        echo "$line"
+    done < file
+
+
+FUNCTIONS
+---------
+
+    install_pkg() {
+        pacman -S --needed "$@"
+    }
+
+
+ARRAYS
+------
+
+    packages=(
+        git
+        openssh
+    )
+
+    printf '%s\n' "${packages[@]}"
+
+
+EXIT / ERRORS
+-------------
+
+    command
+    echo "$?"                   previous exit code
+
+    exit 0                      success
+    exit 1                      generic failure
+
+Recommended top of install scripts:
+
+    set -euo pipefail
+
+Meaning roughly:
+
+    -e      stop on failed commands
+    -u      error on unset variables
+    pipefail fail pipeline if an earlier command fails
+
+
+HEREDOC
+-------
+
+    cat > file <<'EOF'
+    literal text
+    $variables are NOT expanded because EOF was quoted
+    EOF
+
+Expandable version:
+
+    cat > file <<EOF
+    $variables ARE expanded
+    EOF
+
+
+PERMISSIONS
+-----------
+
+    ls -l FILE
+    chmod +x SCRIPT
+    chmod 600 PRIVATE_FILE
+    chmod 644 NORMAL_FILE
+    chmod 755 EXECUTABLE
+    chown USER:GROUP FILE
+
+
+ROOT
+----
+
+Base already has `su`:
+
+    su -
+
+Return:
+
+    exit
+
+Later you can deliberately choose:
+    sudo
+OR
+    polkit + systemd run0
+
+Do not install one merely because every guide assumes it.
+
+
+PROCESSES / SIGNALS
+-------------------
+
+    ps aux
+    pgrep NAME
+    pkill NAME
+    kill PID
+    kill -TERM PID
+    kill -KILL PID              last resort
+    top
+
+
+SYSTEMD
+-------
+
+    systemctl status UNIT
+    systemctl start UNIT
+    systemctl stop UNIT
+    systemctl restart UNIT
+    systemctl enable UNIT
+    systemctl disable UNIT
+    systemctl enable --now UNIT
+    systemctl list-units
+    systemctl list-unit-files
+
+User service:
+
+    systemctl --user status UNIT
+    systemctl --user restart UNIT
+
+Logs:
+
+    journalctl -b
+    journalctl -u UNIT
+    journalctl --user -u UNIT
+    journalctl -f
+
+
+NETWORK
+-------
+
+    ip link
+    ip addr
+    ip route
+    ss -tulpn
+    ping HOST
+    networkctl
+    resolvectl
+    curl URL
+    curl -I URL
+
+
+STORAGE
+-------
+
+    lsblk -f
+    blkid
+    findmnt
+    mount
+    umount PATH
+    df -h
+    du -sh PATH
+
+
+HARDWARE / KERNEL
+-----------------
+
+    lspci -k
+    lsusb
+    lsmod
+    modprobe MODULE
+    dmesg
+    uname -a
+
+
+PACMAN
+------
+
+    pacman -Syu
+        sync DB + full system upgrade
+
+    pacman -S PACKAGE
+        install
+
+    pacman -S --needed PACKAGE
+        install only if missing/outdated
+
+    pacman -R PACKAGE
+        remove package
+
+    pacman -Rs PACKAGE
+        remove package + now-unused deps
+
+    pacman -Ss TERM
+        search repositories
+
+    pacman -Qs TERM
+        search installed packages
+
+    pacman -Si PACKAGE
+        repository metadata
+
+    pacman -Qi PACKAGE
+        installed metadata
+
+    pacman -Ql PACKAGE
+        package file list
+
+    pacman -Qo FILE
+        who owns file
+
+    pacman -Qe
+        explicit packages
+
+    pacman -Qd
+        packages installed as dependencies
+
+    pacman -Qdt
+        orphan dependencies
+
+    pacman -Sp PACKAGE
+        preview transaction / print package URLs by default
+
+Useful readable preview:
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' PACKAGE
+
+Do NOT partially upgrade Arch:
+
+    BAD:
+        pacman -Sy PACKAGE
+
+Prefer:
+
+        pacman -Syu
+or:
+        pacman -Syu PACKAGE
+
+===============================================================================
+== 22. LEARN BASE BEFORE REPLACING ITS TOOLS ==
+===============================================================================
+
+Before installing fancy replacements, become comfortable with:
+
+    grep
+    sed
+    find
+    ps
+    top
+    ip
+    ss
+    lsblk
+    findmnt
+    journalctl
+    systemctl
+    networkctl
+    resolvectl
+
+Then modern additions make more sense.
+
+===============================================================================
+== 23. MODERN SHELL TOOLS WORTH ADDING ==
+===============================================================================
+
+Recommended order:
+
+    ripgrep     -> `rg`
+    fd          -> `fd`
+    fzf         -> `fzf`
+    jq          -> JSON processing
+
+These are small, composable and useful in code/scripts.
+
+Create:
+
+    cat > ~/src/launch/install/30-shell-tools.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    (( EUID == 0 )) || { echo "run as root"; exit 1; }
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' \
+        ripgrep fd fzf jq
+
+    pacman -S --needed ripgrep fd fzf jq
+    EOF
+
+Commands:
+
+    rg PATTERN
+    rg PATTERN PATH
+    rg -n PATTERN PATH
+    rg --files
+
+    fd NAME
+    fd -e rs
+    fd PATTERN PATH
+
+    fzf
+    fd | fzf
+    rg --files | fzf
+
+    jq . file.json
+    COMMAND_PRODUCING_JSON | jq .
+    jq '.field' file.json
+
+Why fzf matters later:
+    clipboard picker
+    terminal file chooser
+    generic shell selection UI
+
+===============================================================================
+== 24. COOL LOW-LEVEL TOOLS: ADD WHEN YOU WANT TO STUDY THEM ==
+===============================================================================
+
+Recommended:
+
+    strace
+        See syscalls a process makes.
+
+        strace COMMAND
+        strace -f COMMAND
+        strace -p PID
+        strace -e trace=file COMMAND
+
+    lsof
+        Which process has a file/socket open?
+
+        lsof FILE
+        lsof -i
+        lsof -p PID
+
+    btop
+        Nice interactive process/resource monitor.
+
+        btop
+
+Optional script:
+
+    pacman -S --needed strace lsof btop
+
+Other excellent built-in tools you ALREADY have:
+
+    journalctl
+    systemd-analyze
+    systemd-cgls
+    systemd-cgtop
+    udevadm
+    busctl
+    loginctl
+    coredumpctl
+    networkctl
+    resolvectl
+
+Examples:
+
+    systemd-analyze
+    systemd-analyze blame
+    systemd-cgls
+    systemd-cgtop
+    loginctl
+    loginctl session-status
+    udevadm info /dev/input/event0
+    busctl list
+
+===============================================================================
+== 25. DEVELOPMENT / BUILD TOOL LAYER ==
+===============================================================================
+
+Do NOT install this on day zero.
+
+Add it when you want to:
+    - compile C/C++
+    - inspect ELF binaries
+    - build AUR packages manually
+    - build terminal-filechooser
+    - understand how Linux programs become executables
+
+Arch convention:
+
+    base-devel
+
+Important things it introduces include concepts/tools such as:
+
+    gcc         C/C++ compiler toolchain
+    make        build orchestration
+    binutils    ld, as, objdump, readelf, nm...
+    pkgconf     discover installed development libraries
+    patch       apply textual patches
+    fakeroot    package-building environment
+    makepkg     Arch package builder (provided through pacman tooling)
+    autoconf/
+    automake/
+    m4/
+    libtool     older/common Unix build ecosystems
+
+Install when ready:
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' base-devel
+    pacman -S --needed base-devel
+
+Commands worth learning:
+
+    gcc hello.c -o hello
+    make
+    makepkg
+    makepkg -si
+
+    file ./binary
+    ldd ./binary
+    readelf -h ./binary
+    readelf -d ./binary
+    objdump -d ./binary
+    nm ./binary
+
+This stage explains a LOT of Linux userspace.
+
+===============================================================================
+== 26. GPU / GRAPHICS FOUNDATION BEFORE HYPRLAND ==
+===============================================================================
+
+Hyprland is not the GPU driver.
+
+Conceptual stack:
+
+    hardware
+      -> kernel DRM/KMS driver
+      -> firmware (when required)
+      -> userspace graphics driver
+      -> EGL/OpenGL/Vulkan
+      -> Wayland compositor (Hyprland)
+
+Inspect:
+
+    lspci -k | grep -A3 -E 'VGA|3D|Display'
+
+AMD common userspace:
+
+    mesa
+    vulkan-radeon          OPTIONAL if you need Vulkan
+
+Intel common userspace:
+
+    mesa
+    vulkan-intel           OPTIONAL if you need Vulkan
+
+NVIDIA:
+    Treat separately.
+    NVIDIA/Hyprland compatibility details change frequently.
+    Check the CURRENT Hyprland NVIDIA page before installing driver packages.
+    Do not blindly copy old NVIDIA environment-variable guides.
+
+For AMD/Intel, install `mesa` explicitly before Hyprland so you understand that
+it is your userspace graphics implementation rather than allowing it to feel
+like a mysterious compositor dependency.
+
+Example:
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' mesa
+    pacman -S --needed mesa
+
+Learn:
+
+    /dev/dri/*
+        DRM devices exposed by kernel.
+
+    ls -l /dev/dri
+
+===============================================================================
+== 27. WAYLAND CONCEPT BEFORE HYPRLAND ==
+===============================================================================
+
+Understand these roles:
+
+    Linux kernel
+        hardware, DRM/KMS, input devices
+
+    libinput
+        normalized keyboard/mouse/touchpad input library
+
+    Wayland
+        protocol between compositor and clients
+
+    compositor
+        owns displays/input and composes windows
+
+    Hyprland
+        your Wayland compositor + window manager
+
+Unlike a full DE, Hyprland does NOT automatically mean:
+    file manager
+    panel
+    launcher
+    notifications
+    audio controls
+    login manager
+    GUI settings app
+
+That is perfect for this build.
+
+===============================================================================
+== 28. INSTALL HYPRLAND ALONE FIRST ==
+===============================================================================
+
+Create:
+
+    cat > ~/src/launch/install/60-hyprland.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    (( EUID == 0 )) || { echo "run as root"; exit 1; }
+
+    echo "Hyprland transaction:"
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' hyprland
+
+    pacman -S --needed hyprland
+    EOF
+
+Before running:
+
+    pacman -Si hyprland
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' hyprland
+
+After install, if pacman-contrib is present:
+
+    pactree -d 1 hyprland
+    pactree hyprland
+
+Do NOT manually install each Hyprland library.
+
+Notice major concepts in the tree:
+    aquamarine
+    libinput
+    libdrm
+    wayland
+    cairo
+    hyprlang / hyprutils / other Hypr ecosystem libraries
+
+Start from TTY:
+
+    start-hyprland
+
+Useful commands:
+
+    hyprctl version
+    hyprctl monitors
+    hyprctl clients
+    hyprctl workspaces
+    hyprctl devices
+
+Exit Hyprland from another TTY if necessary:
+
+    hyprctl dispatch exit
+
+===============================================================================
+== 29. INSTALL FOOT: MINIMAL WAYLAND TERMINAL ==
+===============================================================================
+
+Why foot:
+    fast
+    lightweight
+    Wayland-native
+    simple
+    no giant terminal framework
+
+Install:
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' foot
+    pacman -S --needed foot
+
+Run inside Hyprland:
+
+    foot
+
+Useful:
+
+    foot
+    foot COMMAND
+    foot -C                 verify config
+
+Config later:
+
+    ~/.config/foot/foot.ini
+
+===============================================================================
+== 30. CREATE A MINIMAL HYPRLAND CONFIG WITH NO EDITOR ==
+===============================================================================
+
+As normal user:
+
+    mkdir -p ~/.config/hypr
+
+Create:
+
+    cat > ~/.config/hypr/hyprland.conf <<'EOF'
+    $mod = SUPER
+    $terminal = foot
+    $launcher = fuzzel
+    $browser = firefox
+
+    bind = $mod, RETURN, exec, $terminal
+    bind = $mod, R, exec, $launcher
+    bind = $mod, B, exec, $browser
+    bind = $mod, Q, killactive
+    bind = $mod SHIFT, E, exit
+
+    bind = $mod, H, movefocus, l
+    bind = $mod, J, movefocus, d
+    bind = $mod, K, movefocus, u
+    bind = $mod, L, movefocus, r
+
+    bind = $mod SHIFT, H, movewindow, l
+    bind = $mod SHIFT, J, movewindow, d
+    bind = $mod SHIFT, K, movewindow, u
+    bind = $mod SHIFT, L, movewindow, r
+
+    bind = $mod, 1, workspace, 1
+    bind = $mod, 2, workspace, 2
+    bind = $mod, 3, workspace, 3
+    bind = $mod, 4, workspace, 4
+    bind = $mod, 5, workspace, 5
+    bind = $mod, 6, workspace, 6
+    bind = $mod, 7, workspace, 7
+    bind = $mod, 8, workspace, 8
+    bind = $mod, 9, workspace, 9
+
+    bind = $mod SHIFT, 1, movetoworkspace, 1
+    bind = $mod SHIFT, 2, movetoworkspace, 2
+    bind = $mod SHIFT, 3, movetoworkspace, 3
+    bind = $mod SHIFT, 4, movetoworkspace, 4
+    bind = $mod SHIFT, 5, movetoworkspace, 5
+    bind = $mod SHIFT, 6, movetoworkspace, 6
+    bind = $mod SHIFT, 7, movetoworkspace, 7
+    bind = $mod SHIFT, 8, movetoworkspace, 8
+    bind = $mod SHIFT, 9, movetoworkspace, 9
+
+    general {
+        gaps_in = 2
+        gaps_out = 4
+        border_size = 1
+    }
+
+    decoration {
+        rounding = 0
+        shadow {
+            enabled = false
+        }
+        blur {
+            enabled = false
+        }
+    }
+
+    animations {
+        enabled = false
+    }
+    EOF
+
+Reload:
+
+    hyprctl reload
+
+This intentionally starts performance-first:
+    no blur
+    no shadow
+    no animations
+    tiny gaps
+
+Turn visual features on later one by one.
+
+NOTE:
+    `$browser = firefox` is only a placeholder.
+    No browser is installed by this guide automatically.
+    Change it to the browser you deliberately choose.
+
+===============================================================================
+== 31. FUZzel: APP LAUNCHER ==
+===============================================================================
+
+Install:
+
+    pacman -S --needed fuzzel
+
+Run:
+
+    fuzzel
+
+Dmenu mode:
+
+    printf '%s\n' one two three | fuzzel --dmenu
+
+Why it matters:
+    generic graphical picker
+    app launcher
+    later usable with cliphist
+
+Config:
+
+    ~/.config/fuzzel/fuzzel.ini
+
+Your binding already uses:
+
+    Super + R
+
+===============================================================================
+== 32. MAKO: NOTIFICATION DAEMON ==
+===============================================================================
+
+Install:
+
+    pacman -S --needed mako
+
+Commands:
+
+    mako
+    makoctl dismiss
+    makoctl dismiss --all
+    makoctl reload
+
+Config:
+
+    ~/.config/mako/config
+
+Start once per Hyprland session:
+
+    exec-once = mako
+
+You can later use the packaged systemd user service instead if preferred.
+
+===============================================================================
+== 33. CLIPBOARD: WL-CLIPBOARD FIRST ==
+===============================================================================
+
+Install:
+
+    pacman -S --needed wl-clipboard
+
+Commands:
+
+    printf '%s' hello | wl-copy
+    wl-paste
+    wl-paste --watch COMMAND
+
+This is worth learning because it composes naturally with Unix pipes.
+
+Examples:
+
+    pwd | wl-copy
+    wl-paste > file.txt
+
+===============================================================================
+== 34. OPTIONAL CLIPBOARD HISTORY: CLIPHIST ==
+===============================================================================
+
+Install:
+
+    pacman -S --needed cliphist
+
+Start watcher:
+
+    wl-paste --watch cliphist store
+
+Add to Hyprland later:
+
+    exec-once = wl-paste --watch cliphist store
+
+List history:
+
+    cliphist list
+
+Terminal/fzf selector:
+
+    cliphist list | fzf --no-sort | cliphist decode | wl-copy
+
+Fuzzel selector:
+
+    cliphist list | fuzzel --dmenu | cliphist decode | wl-copy
+
+Delete selection:
+
+    cliphist list | fzf --no-sort | cliphist delete
+
+Clear all:
+
+    cliphist wipe
+
+This is a great example of Linux composition:
+
+    producer | selector | transformer | clipboard
+
+===============================================================================
+== 35. SCREENSHOTS: GRIM + SLURP ==
+===============================================================================
+
+Install:
+
+    pacman -S --needed grim slurp
+
+Whole display/layout:
+
+    grim ~/screenshot.png
+
+Region:
+
+    grim -g "$(slurp)" ~/screenshot.png
+
+Screenshot directly to clipboard:
+
+    grim -g "$(slurp)" - | wl-copy
+
+Create screenshot directory:
+
+    mkdir -p ~/Pictures/Screenshots
+
+Timestamped region:
+
+    grim -g "$(slurp)" \
+        "$HOME/Pictures/Screenshots/$(date +%Y-%m-%d_%H-%M-%S).png"
+
+Hyprland keybind idea:
+
+    bind = , PRINT, exec, grim "$HOME/Pictures/Screenshots/$(date +%Y-%m-%d_%H-%M-%S).png"
+    bind = SUPER, PRINT, exec, grim -g "$(slurp)" "$HOME/Pictures/Screenshots/$(date +%Y-%m-%d_%H-%M-%S).png"
+
+If nested quoting becomes annoying, move screenshot logic to:
+
+    ~/src/launch/bin/screenshot.sh
+
+and bind the script.
+
+===============================================================================
+== 36. AUDIO: LEARN ALSA -> THEN PIPEWIRE ==
+===============================================================================
+
+Concept:
+
+    kernel audio driver
+        -> ALSA
+        -> PipeWire
+        -> WirePlumber policy
+        -> PulseAudio compatibility for normal apps
+
+OPTIONAL LEARNING TOOL:
+
+    alsa-utils
+
+Useful commands if installed:
+
+    aplay -l
+    arecord -l
+    alsamixer
+
+Then install modern daily-driver layer:
+
+    pipewire
+    pipewire-audio
+    pipewire-pulse
+    pipewire-alsa
+    wireplumber
+
+Install:
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' \
+        pipewire pipewire-audio pipewire-pulse pipewire-alsa wireplumber
+
+    pacman -S --needed \
+        pipewire pipewire-audio pipewire-pulse pipewire-alsa wireplumber
+
+Usually these run as user services/sockets.
+
+Inspect:
+
+    systemctl --user status pipewire.service
+    systemctl --user status pipewire-pulse.service
+    systemctl --user status wireplumber.service
+
+Audio control:
+
+    wpctl status
+
+Volume:
+
+    wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+
+    wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
+
+Mute:
+
+    wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
+
+Hyprland media-key bindings can directly call wpctl.
+
+===============================================================================
+== 37. XDG PORTALS: WHY THEY EXIST ==
+===============================================================================
+
+Portals provide standardized desktop functionality to applications:
+
+    screen sharing
+    screenshots
+    file selection
+    opening URIs
+    settings/integration
+    sandbox-friendly access
+
+Install for Hyprland:
+
+    xdg-desktop-portal
+    xdg-desktop-portal-hyprland
+
+Command:
+
+    pacman -S --needed \
+        xdg-desktop-portal \
+        xdg-desktop-portal-hyprland
+
+Inspect:
+
+    systemctl --user status xdg-desktop-portal.service
+    systemctl --user status xdg-desktop-portal-hyprland.service
+
+Logs:
+
+    journalctl --user -u xdg-desktop-portal.service
+    journalctl --user -u xdg-desktop-portal-hyprland.service
+
+Hyprland portal is important for things such as screen sharing.
+
+===============================================================================
+== 38. TERMINAL FILE CHOOSER: NO GRAPHICAL FILE MANAGER ==
+===============================================================================
+
+Goal:
+
+    browser/Discord/app requests "choose file"
+      -> XDG FileChooser portal
+      -> small foot window
+      -> fd generates files
+      -> fzf selects one
+      -> selected path returned to application
+
+No Nautilus.
+No Dolphin.
+No Thunar.
+No PCManFM.
+
+Current Arch status:
+    xdg-desktop-portal-termfilechooser is an AUR package rather than an
+    official repository package.
+
+For your learning goals:
+    DO NOT install an AUR helper just for this.
+
+Instead, once you reached the base-devel stage:
+
+    git clone https://aur.archlinux.org/xdg-desktop-portal-termfilechooser-hunkyburrito-git.git
+    cd xdg-desktop-portal-termfilechooser-hunkyburrito-git
+
+READ BEFORE BUILDING:
+
+    cat PKGBUILD
+    grep -nE '^(pkgname|pkgver|depends|makedepends|source)=' PKGBUILD
+
+Build/install as NORMAL USER:
+
+    makepkg -si
+
+Never run makepkg as root.
+
+Find installed example fzf wrapper:
+
+    pacman -Ql xdg-desktop-portal-termfilechooser-hunkyburrito-git | grep fzf
+
+Create config:
+
+    mkdir -p ~/.config/xdg-desktop-portal-termfilechooser
+
+Use the installed fzf wrapper path shown by pacman -Ql.
+
+Typical idea:
+
+    ~/.config/xdg-desktop-portal-termfilechooser/config
+
+    [filechooser]
+    cmd=fzf-wrapper.sh
+    default_dir=$HOME
+    env=TERMCMD=foot -T "file chooser"
+    open_mode=suggested
+    save_mode=last
+
+Route only FileChooser to termfilechooser:
+
+    mkdir -p ~/.config/xdg-desktop-portal
+
+    cat > ~/.config/xdg-desktop-portal/portals.conf <<'EOF'
+    [preferred]
+    default=hyprland
+    org.freedesktop.impl.portal.FileChooser=termfilechooser
+    EOF
+
+Restart portals:
+
+    systemctl --user restart xdg-desktop-portal.service
+
+Debug:
+
+    systemctl --user status xdg-desktop-portal.service
+    journalctl --user -eu xdg-desktop-portal-termfilechooser
+
+IMPORTANT:
+    Not every non-sandboxed app always chooses to use the XDG file portal.
+    Some apps/toolkits may need an environment setting or app-specific option.
+
+For GTK apps that support portal forcing, a common knob is:
+
+    GTK_USE_PORTAL=1
+
+Do not globally force it until you test your actual apps.
+
+===============================================================================
+== 39. NEOVIM: FIRST TEXT EDITOR ==
+===============================================================================
+
+You made it this far using:
+    cat
+    printf
+    sed
+    heredocs
+    Git
+
+Now install your actual editor:
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' neovim
+    pacman -S --needed neovim
+
+Command:
+
+    nvim FILE
+    nvim DIR
+
+Config:
+
+    ~/.config/nvim/
+
+Put your config in Launch:
+
+    ~/src/launch/config/nvim/
+
+Then either:
+
+    ln -s ~/src/launch/config/nvim ~/.config/nvim
+
+or let a small install script create the symlink.
+
+Do not install Vim/Nano merely as stepping stones.
+
+===============================================================================
+== 40. OPTIONAL STATUS BAR ==
+===============================================================================
+
+START WITH NO BAR.
+
+This teaches you that a compositor does not need one.
+
+Use:
+
+    Super+1..9
+    hyprctl workspaces
+    wpctl status
+    date
+    networkctl
+
+for a while.
+
+If you decide a bar genuinely improves daily use, Waybar is polished and easy
+to theme, but it is NOT dependency-minimal. It pulls a substantial GTK and
+feature stack.
+
+Install late:
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' waybar
+    pactree -d 1 waybar
+    pacman -S --needed waybar
+
+Run:
+
+    waybar
+
+Config:
+
+    ~/.config/waybar/config.jsonc
+    ~/.config/waybar/style.css
+
+Hyprland:
+
+    exec-once = waybar
+
+Suggested minimal modules:
+
+    Hyprland workspaces
+    clock
+    CPU
+    memory
+    network
+    PipeWire volume
+
+Do not enable 30 modules because they exist.
+
+===============================================================================
+== 41. OPTIONAL LOCK/IDLE ==
+===============================================================================
+
+A display manager/login screen is NOT required.
+
+A lock screen is a separate security function.
+
+If you need locking:
+
+    hyprlock
+    hypridle
+
+If this is a desktop you never leave unattended, you can postpone them.
+
+No wallpaper tool is required.
+
+===============================================================================
+== 42. HYPRLAND STACKS: PERFORMANCE / FEEL ==
+===============================================================================
+
+STACK A -- RAW / LEARNING
+-------------------------
+
+    Hyprland
+    foot
+    fuzzel
+
+Nothing else unless needed.
+
+Feel:
+    extremely bare
+    very fast
+    excellent for understanding the compositor itself
+
+Background:
+    almost nothing beyond session/system services
+
+Missing:
+    notifications
+    audio integration
+    portal file chooser
+    clipboard history
+    status bar
+
+
+STACK B -- LEAN DAILY DRIVER [RECOMMENDED TARGET]
+--------------------------------------------------
+
+    Hyprland
+    foot
+    fuzzel
+    mako
+    wl-clipboard
+    grim
+    slurp
+    PipeWire
+    pipewire-audio
+    pipewire-pulse
+    WirePlumber
+    xdg-desktop-portal
+    xdg-desktop-portal-hyprland
+    fd
+    fzf
+    terminal FileChooser portal
+
+Optional:
+    cliphist
+
+Feel:
+    clean
+    keyboard-first
+    almost no desktop shell
+    enough functionality for real work
+
+Performance:
+    excellent
+
+This is the target I would use first.
+
+
+STACK C -- LEAN + CONVENIENCE
+-----------------------------
+
+Everything in B plus:
+
+    cliphist
+    Waybar
+    hyprlock
+    hypridle
+    browser of your choice
+
+Feel:
+    more polished
+    still minimal compared with a DE
+
+Cost:
+    extra background processes
+    Waybar introduces a noticeably larger dependency closure than the rest of
+    this minimal shell because it uses GTK and many integrations.
+
+The largest practical performance difference is usually NOT "Waybar costs a
+few MB". It is whether you enable expensive compositor effects and run lots of
+background apps.
+
+For performance:
+    blur off
+    shadows off
+    animations off or minimal
+    avoid unnecessary Electron apps
+    avoid unnecessary autostarts
+    inspect what actually runs
+
+===============================================================================
+== 43. RECOMMENDED PACKAGE LEARNING ORDER ==
+===============================================================================
+
+0. BOOT FOUNDATION
+    base
+    linux
+    mkinitcpio
+    e2fsprogs/dosfstools
+    CPU microcode
+    only required firmware
+
+Learn:
+    kernel vs userspace
+    initramfs
+    filesystems
+    bootloader
+    systemd
+    pacman
+
+
+1. NETWORK WITHOUT A NETWORK MANAGER
+    systemd-networkd      already systemd
+    systemd-resolved      already systemd
+    systemd-timesyncd     already systemd
+    iwd                   Wi-Fi only
+
+Learn:
+    interface/link
+    DHCP
+    route
+    DNS
+    Wi-Fi authentication
+
+
+2. AUTOMATION + REMOTE SOURCE
+    git
+    openssh
+
+Learn:
+    repositories
+    commits
+    SSH keys
+    remotes
+    pushing system config
+
+
+3. PACKAGE INTROSPECTION
+    pacman-contrib
+    pkgfile
+
+Learn:
+    dependency graphs
+    reverse dependencies
+    package ownership
+    package cache
+
+
+4. MODERN CLI COMPOSITION
+    ripgrep
+    fd
+    fzf
+    jq
+
+Learn:
+    pipelines
+    filtering
+    structured data
+    interactive selection
+
+
+5. LOW-LEVEL DEBUGGING
+    strace
+    lsof
+    optional btop
+
+Learn:
+    syscalls
+    file descriptors
+    processes
+    sockets
+
+
+6. BUILD TOOLCHAIN
+    base-devel
+
+Learn:
+    compiling/linking
+    object files/ELF
+    build systems
+    PKGBUILD / makepkg
+
+
+7. GPU USERSACE
+    mesa / GPU-specific stack
+
+Learn:
+    DRM/KMS
+    Mesa
+    EGL/OpenGL/Vulkan concepts
+
+
+8. WAYLAND COMPOSITOR
+    hyprland
+
+Learn:
+    compositor
+    Wayland
+    input
+    workspaces/windows
+
+
+9. BASIC SHELL
+    foot
+    fuzzel
+
+Learn:
+    terminal emulator != shell
+    launcher != desktop environment
+
+
+10. DESKTOP PRIMITIVES
+    mako
+    wl-clipboard
+    grim
+    slurp
+
+Learn:
+    notifications
+    clipboard protocols
+    Wayland screen capture
+
+
+11. AUDIO
+    optional alsa-utils
+    pipewire
+    pipewire-audio
+    pipewire-pulse
+    pipewire-alsa
+    wireplumber
+
+Learn:
+    ALSA vs audio server vs policy manager
+
+
+12. PORTALS
+    xdg-desktop-portal
+    xdg-desktop-portal-hyprland
+
+Learn:
+    D-Bus/desktop interoperability
+    screen sharing
+    sandbox interfaces
+
+
+13. TERMINAL FILE CHOOSER
+    base-devel already installed
+    termfilechooser AUR package
+    fd + fzf
+
+Learn:
+    PKGBUILDs
+    portal routing
+    terminal composition
+
+
+14. EDITOR
+    neovim
+
+Learn/configure:
+    your actual coding environment
+
+
+15. OPTIONAL COMFORT
+    cliphist
+    Waybar
+    hyprlock/hypridle
+    browser
+
+Only add what earns its place.
+
+===============================================================================
+== 44. COMMANDS ADDED BY EACH MAJOR PACKAGE ==
+===============================================================================
+
+PACKAGE / SUBSYSTEM                COMMANDS TO REMEMBER
+-------------------------------------------------------------------------------
+base/coreutils                     ls cp mv rm mkdir cat head tail chmod chown
+findutils                          find xargs
+grep                               grep
+sed                                sed
+util-linux                         lsblk findmnt mount umount blkid fdisk
+procps-ng                          ps top pgrep pkill
+iproute2                           ip ss
+iputils                            ping
+pciutils                           lspci
+systemd                            systemctl journalctl networkctl resolvectl
+systemd                            loginctl udevadm busctl systemd-analyze
+systemd                            systemd-cgls systemd-cgtop bootctl
+pacman                             pacman pacman-conf
+iwd                                iwctl
+git                                git
+openssh                            ssh scp sftp ssh-keygen
+pacman-contrib                     pactree paccache
+pkgfile                            pkgfile
+ripgrep                            rg
+fd                                 fd
+fzf                                fzf
+jq                                 jq
+strace                             strace
+lsof                               lsof
+btop                               btop
+base-devel/toolchain               gcc make makepkg
+binutils                           ld as readelf objdump nm
+neovim                             nvim
+hyprland                           start-hyprland hyprctl
+foot                               foot
+fuzzel                             fuzzel
+mako                               mako makoctl
+wl-clipboard                       wl-copy wl-paste
+cliphist                           cliphist
+grim                               grim
+slurp                              slurp
+wireplumber                        wireplumber wpctl
+pipewire                           pipewire pw-cli pw-top
+waybar                             waybar
+
+===============================================================================
+== 45. SIMPLE INSTALL-SCRIPT STYLE ==
+===============================================================================
+
+A shared helper can stay tiny.
+
+Create:
+
+    cat > ~/src/launch/lib/common.sh <<'EOF'
+    #!/usr/bin/env bash
+
+    require_root() {
+        if (( EUID != 0 )); then
+            echo "this script must run as root"
+            exit 1
+        fi
+    }
+
+    preview() {
+        pacman -Sp --needed --print-format '%n  %v  %s  %d' "$@"
+    }
+
+    install_packages() {
+        pacman -S --needed "$@"
+    }
+    EOF
+
+Example stage:
+
+    cat > ~/src/launch/install/70-desktop-tools.sh <<'EOF'
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+    source "$ROOT/lib/common.sh"
+
+    require_root
+
+    packages=(
+        foot
+        fuzzel
+        mako
+        wl-clipboard
+        grim
+        slurp
+    )
+
+    preview "${packages[@]}"
+    install_packages "${packages[@]}"
+    EOF
+
+Keep configuration deployment separate:
+
+    install package
+    then link/copy config
+
+This makes rerunning safe:
+
+    pacman -S --needed ...
+
+===============================================================================
+== 46. OPTIONAL TOGGLES WITHOUT BUILDING A CONFIG LANGUAGE ==
+===============================================================================
+
+Use environment variables or Bash variables.
+
+Example:
+
+    WITH_WAYBAR="${WITH_WAYBAR:-0}"
+    WITH_CLIPHIST="${WITH_CLIPHIST:-1}"
+
+    if [[ "$WITH_WAYBAR" == 1 ]]; then
+        packages+=(waybar)
+    fi
+
+Run:
+
+    WITH_WAYBAR=1 ./install/desktop.sh
+
+Or config file:
+
+    ~/src/launch/machine.conf
+
+    WITH_WAYBAR=1
+    WITH_CLIPHIST=1
+    BROWSER=firefox
+
+Script:
+
+    source "$ROOT/machine.conf"
+
+Do NOT write a custom parser until Bash stops being enough.
+
+===============================================================================
+== 47. CONFIG VALUES ==
+===============================================================================
+
+Use normal shell variables:
+
+    TERMINAL=foot
+    LAUNCHER=fuzzel
+    BROWSER=firefox
+
+For simple generated config:
+
+    cat > generated.conf <<EOF
+    terminal=$TERMINAL
+    browser=$BROWSER
+    EOF
+
+For most app configs:
+    keep the actual config file in Git
+    symlink it into ~/.config
+
+Example:
+
+    ln -s ~/src/launch/config/foot ~/.config/foot
+
+Use:
+
+    ln -sfn SOURCE TARGET
+
+only when you understand whether replacing an existing symlink is desired.
+
+===============================================================================
+== 48. HYPRLAND KEYBIND TARGET ==
+===============================================================================
+
+Minimal daily bindings:
+
+    Super + Enter
+        terminal
+
+    Super + R
+        launcher
+
+    Super + B
+        browser (only if installed/configured)
+
+    Super + Q
+        close focused window
+
+    Super + H/J/K/L
+        focus left/down/up/right
+
+    Super + Shift + H/J/K/L
+        move window
+
+    Super + 1..9
+        switch workspace
+
+    Super + Shift + 1..9
+        move window to workspace
+
+    Print
+        screenshot
+
+    Super + Print
+        region screenshot
+
+Optional:
+
+    Super + V
+        clipboard history picker
+
+No desktop.
+No file-manager shortcut.
+No app grid.
+No graphical settings center.
+
+===============================================================================
+== 49. PERFORMANCE AUDIT ==
+===============================================================================
+
+After the system is usable:
+
+BOOT
+----
+
+    systemd-analyze
+    systemd-analyze blame
+
+SYSTEM SERVICES
+---------------
+
+    systemctl --type=service --state=running
+    systemctl list-unit-files --state=enabled
+
+USER SERVICES
+-------------
+
+    systemctl --user --type=service --state=running
+    systemctl --user list-unit-files --state=enabled
+
+PROCESSES
+---------
+
+    ps aux --sort=-%mem | head -n 30
+    ps aux --sort=-%cpu | head -n 30
+
+Or if installed:
+
+    btop
+
+MEMORY
+------
+
+    free -h
+
+DISK
+----
+
+    df -h
+    du -sh ~/.cache
+    du -sh /var/cache/pacman/pkg
+
+PACKAGES
+--------
+
+    pacman -Qe
+    pacman -Qdt
+
+Dependency reason:
+
+    pactree -r PACKAGE
+
+Ask this for every surprising process:
+
+    What launched it?
+    Is it system or user service?
+    Is it needed all the time?
+    What package owns its executable?
+
+Find executable package:
+
+    command -v NAME
+    pacman -Qo "$(command -v NAME)"
+
+===============================================================================
+== 50. PACKAGE CACHE CLEANUP ==
+===============================================================================
+
+Pacman intentionally caches downloaded package archives.
+
+See size:
+
+    du -sh /var/cache/pacman/pkg
+
+With pacman-contrib:
+
+    paccache -d
+
+Clean older versions while retaining recent rollback candidates:
+
+    paccache -r
+
+Do NOT obsessively delete every cached previous version.
+A small rollback window is useful on rolling release systems.
+
+===============================================================================
+== 51. CHECK WHAT YOU INTENTIONALLY INSTALLED ==
+===============================================================================
+
+This is one of your most important commands:
+
+    pacman -Qe
+
+Your ideal reaction to every line:
+
+    "I know what that is and why I explicitly installed it."
+
+Dependencies:
+
+    pacman -Qd
+
+You do NOT need to memorize every shared library.
+
+For a mystery dependency:
+
+    pacman -Qi PACKAGE
+    pactree -r PACKAGE
+
+For mystery file:
+
+    pacman -Qo PATH
+
+For mystery command:
+
+    command -v COMMAND
+    pacman -Qo "$(command -v COMMAND)"
+
+===============================================================================
+== 52. NO MANUALS / DOCS POLICY ==
+===============================================================================
+
+Do not install:
+
+    man-db
+    man-pages
+    texinfo
+    *-docs packages unless actually required
+
+Pacman NoExtract policy established during bootstrap:
+
+    usr/share/man/*
+    usr/share/doc/*
+    usr/share/info/*
+    usr/share/gtk-doc/*
+    usr/share/help/*
+
+Check effective config:
+
+    pacman-conf NoExtract
+
+Some applications intentionally ship documentation-like data inside their own
+runtime trees.
+
+Do NOT aggressively delete arbitrary package-owned runtime directories just
+because their name contains "doc".
+
+Your phone/browser is your external documentation.
+
+===============================================================================
+== 53. THINGS NOT TO OPTIMIZE TOO EARLY ==
+===============================================================================
+
+Do not immediately:
+
+    - custom-compile your kernel
+    - disable random systemd units you do not understand
+    - remove base packages
+    - use --nodeps
+    - replace glibc
+    - hand-delete package-owned libraries
+    - build Hyprland from git
+    - use giant dotfile frameworks
+    - write your own package manager
+    - use an AUR helper before learning PKGBUILDs/makepkg
+    - enable every compositor effect and then benchmark "Linux performance"
+
+First make the system:
+    understandable
+    reproducible
+    observable
+    bootable
+
+Then optimize measured problems.
+
+===============================================================================
+== 54. WHAT "PERFORMANT" SHOULD MEAN HERE ==
+===============================================================================
+
+Good targets:
+
+    little idle CPU use
+    few unnecessary daemons
+    low input latency
+    no desktop shell you do not use
+    simple compositor config
+    no blur/shadow if you do not care about them
+    fast terminal/launcher
+    correct GPU drivers
+    no needless autostarts
+    no huge app stacks merely for tiny functionality
+
+Do NOT measure success solely by:
+    package count
+    20 MB of disk difference
+    shaving a few MB RAM from an idle bar
+
+A correct graphics/audio stack is more important than artificial package-count
+minimalism.
+
+===============================================================================
+== 55. FINAL RECOMMENDED SYSTEM ==
+===============================================================================
+
+BOOT / CORE
+-----------
+
+    UEFI
+    systemd-boot
+    linux
+    mkinitcpio
+    systemd
+    pacman
+    Arch base
+    CPU microcode
+    hardware-specific firmware
+    ext4
+
+
+NETWORK
+-------
+
+    systemd-networkd
+    systemd-resolved
+    systemd-timesyncd
+    iwd ONLY if Wi-Fi
+
+
+SOURCE / AUTOMATION
+-------------------
+
+    Bash
+    Git
+    OpenSSH
+    GitHub SSH remote
+    ~/src/launch
+
+
+CLI LEARNING
+------------
+
+    pacman-contrib
+    pkgfile
+    ripgrep
+    fd
+    fzf
+    jq
+
+Optional/debug:
+
+    strace
+    lsof
+    btop
+
+
+DEVELOPMENT
+-----------
+
+    base-devel when actually needed
+    Neovim later
+
+
+GRAPHICS / SESSION
+------------------
+
+    correct GPU driver
+    Mesa where appropriate
+    Hyprland
+    TTY -> start-hyprland
+    NO display manager
+
+
+DESKTOP TOOLS
+-------------
+
+    foot
+    fuzzel
+    mako
+    wl-clipboard
+    grim
+    slurp
+
+
+OPTIONAL CLIPBOARD HISTORY
+--------------------------
+
+    cliphist
+
+
+AUDIO
+-----
+
+    PipeWire
+    pipewire-audio
+    pipewire-pulse
+    pipewire-alsa
+    WirePlumber
+
+
+PORTALS
+-------
+
+    xdg-desktop-portal
+    xdg-desktop-portal-hyprland
+    termfilechooser
+    fd + fzf file picker
+
+NO graphical file manager.
+
+
+OPTIONAL BAR
+------------
+
+    Waybar
+
+Install late after proving you want a bar.
+
+
+OPTIONAL SECURITY/IDLE
+----------------------
+
+    hyprlock
+    hypridle
+
+
+EDITOR
+------
+
+    Neovim
+
+No Nano.
+No Vim stepping stone.
+
+
+BROWSER
+-------
+
+    Deliberately choose one later.
+    Bind it to Super+B.
+
+
+===============================================================================
+== 56. THE LEARNING LOOP ==
+===============================================================================
+
+Every time you want a new capability:
+
+1. Define the capability.
+
+    "I need screenshots."
+
+2. Find the smallest tool that does it.
+
+    grim + slurp
+
+3. Search:
+
+    pacman -Ss grim
+    pacman -Si grim
+
+4. Preview transaction:
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' grim slurp
+
+5. If interesting:
+
+    pactree grim
+
+6. Write the install script BEFORE installing it.
+
+7. Commit:
+
+    git add .
+    git commit -m "add screenshot tooling"
+
+8. Run script as root.
+
+9. Learn the commands the package added.
+
+10. Add config/keybind.
+
+11. Commit again.
+
+12. Inspect processes/services if it created any.
+
+13. Push:
+
+    git push
+
+That loop is the entire philosophy of this machine.
+
+===============================================================================
+== 57. QUICK COMMAND INDEX ==
+===============================================================================
+
+READ THIS GUIDE:
+
+    grep -n '^== ' "$GUIDE"
+    grep -n -i TERM "$GUIDE"
+    sed -n 'START,ENDp' "$GUIDE"
+
+WRITE FILE WITHOUT EDITOR:
+
+    cat > FILE <<'EOF'
+    contents
+    EOF
+
+INSTALL:
+
+    pacman -S --needed PACKAGE
+
+PREVIEW INSTALL:
+
+    pacman -Sp --needed --print-format '%n  %v  %s  %d' PACKAGE
+
+DEPENDENCY TREE:
+
+    pactree PACKAGE
+
+WHY IS PACKAGE INSTALLED:
+
+    pactree -r PACKAGE
+
+EXPLICIT PACKAGES:
+
+    pacman -Qe
+
+ORPHANS:
+
+    pacman -Qdt
+
+WHO OWNS FILE:
+
+    pacman -Qo FILE
+
+WHO PROVIDES COMMAND I DO NOT HAVE:
+
+    pkgfile -b COMMAND
+
+SERVICE:
+
+    systemctl status SERVICE
+
+USER SERVICE:
+
+    systemctl --user status SERVICE
+
+LOGS:
+
+    journalctl -b
+    journalctl -u SERVICE
+    journalctl --user -u SERVICE
+
+PROCESS:
+
+    ps aux
+    pgrep NAME
+
+NETWORK:
+
+    ip addr
+    ip route
+    ss -tulpn
+    networkctl
+    resolvectl
+
+HARDWARE:
+
+    lspci -k
+    lsusb
+    lsmod
+
+FILESYSTEM:
+
+    lsblk -f
+    findmnt
+    df -h
+
+GIT:
+
+    git status
+    git diff
+    git add PATH
+    git commit -m MESSAGE
+    git push
+
+START DESKTOP:
+
+    start-hyprland
+
+HYPRLAND:
+
+    hyprctl monitors
+    hyprctl clients
+    hyprctl workspaces
+
+AUDIO:
+
+    wpctl status
+
+COPY:
+
+    COMMAND | wl-copy
+
+PASTE:
+
+    wl-paste
+
+SELECT FILE:
+
+    fd | fzf
+
+SCREENSHOT REGION:
+
+    grim -g "$(slurp)" file.png
+
+===============================================================================
+== 58. CURRENT-STATE NOTES (2026-10-02) ==
+===============================================================================
+
+These details are intentionally dated because rolling-release systems change.
+
+At the time this guide was written:
+
+    Arch `base`
+        is the supported minimal package set and includes systemd, pacman,
+        Bash, coreutils, grep, sed, findutils, iproute2, procps-ng, util-linux,
+        and related foundations.
+
+    Arch `linux`
+        requires an initramfs provider. This guide explicitly chooses
+        mkinitcpio.
+
+    systemd
+        already ships systemd-boot/bootctl, networkd, resolved, timesyncd and
+        many useful inspection commands.
+
+    Hyprland
+        is in Arch's official repositories.
+        Start from TTY with:
+            start-hyprland
+
+    foot
+        is an official Arch package and is a lightweight Wayland terminal.
+
+    fuzzel
+        is available in official Arch repositories.
+
+    mako
+        is available in official Arch repositories.
+
+    wl-clipboard
+        provides wl-copy / wl-paste.
+
+    grim + slurp
+        are the minimal Wayland screenshot/selection pair used here.
+
+    xdg-desktop-portal-hyprland
+        is an official Arch package.
+
+    xdg-desktop-portal-termfilechooser
+        is currently an AUR-style package rather than an official repository
+        package, so this guide intentionally teaches `makepkg` instead of
+        installing an AUR helper.
+
+    Waybar
+        is polished but has a considerably larger dependency closure than the
+        extremely minimal components above, so it stays optional/late.
+
+When this file becomes old:
+
+    pacman -Ss PACKAGE
+    pacman -Si PACKAGE
+    pacman -Sp --needed PACKAGE
+
+and current Arch/Hyprland upstream information should win over this TXT.
+
+===============================================================================
+== END ==
+===============================================================================
+
+Desired final mindset:
+
+    Every explicit package:
+        I know why I installed it.
+
+    Every enabled service:
+        I know why it runs.
+
+    Every major background process:
+        I can find what started it.
+
+    Every config:
+        lives in ~/src/launch or is intentionally system-local.
+
+    Every install:
+        can eventually be replayed by my Bash scripts.
+
+    Linux is not a black box anymore.
+
+--------------------------LSKgWjcNome1hyZBQn0Px6--

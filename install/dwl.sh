@@ -63,7 +63,6 @@ build() {
     gcc dwl.o -lwlroots-0.20 -lwayland-server -lxkbcommon -linput -lm -o dwl
 
     echo "Build completed!"
-
 }
 
 if [[ $1 == "build" ]]; then
@@ -74,7 +73,7 @@ if [[ $1 == "build" ]]; then
 elif [[ $1 == "download" ]]; then
     download
 elif [[ $1 == "install" ]]; then
-    install -Dm755 $BUILD_ROOT/dwl ~/.local/bin/dwl
+    install -Dm755 $BUILD_ROOT/dwl ~/.local/out
 else
     echo "$1 is not a valid argument"
 fi

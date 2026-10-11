@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
 CACHE=$HOME/.cache/build
 BUILD=$CACHE/terminal-file-chooser
 
 mkdir -p $CACHE
+rm -rf -- "$BUILD"
 
 git clone https://aur.archlinux.org/xdg-desktop-portal-termfilechooser-hunkyburrito-git.git $BUILD
 
@@ -60,7 +62,7 @@ if [ "$debug" = 1 ]; then
     set -x
 fi
 
-termcmd="{$TERMCMD:-foot}"
+termcmd="${TERMCMD:-foot}"
 
 if [ -d "$path" ]; then
     start="$path"
@@ -116,14 +118,15 @@ elif [ "$directory" = 1 ]; then
         printf "%s\n" "$PWD" > "$2"
     ' sh "$start" "$out"
 
-elif 
+elif [ "$multiple" = 1 ]; then 
 
     "$termcmd" sh -c '
         cd "$1" || exit 1
 
         fd --type f --hidden --exclude .git | \
         fzf --multi --prompt="Files > " | \
-        while IFS= read -r selected do
+        while IFS= read -r selected 
+        do
             printf "%s/%s\n" "$PWD" "$selected"
         done > "$2"
     ' sh "$start" "$out"
@@ -137,7 +140,7 @@ else
             fzf --prompt="File > "
         ) || exit 1
 
-        printf "%s/"%s\n" "$PWD" "$selected" > "$2"
+        printf "%s/%s\n" "$PWD" "$selected" > "$2"
     ' sh "$start" "$out"
 
 fi

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+# --@INSTALLER_SET 0
+SCRIPT_DIR="/home/lucky/arch-setup/script"
+
+if ! command -v lazy-exec &>/dev/null; then 
+    echo "lazy-exec not found, add lazy-exec to path"
+    exit 1
+fi
+
+lazy-exec $SCRIPT_DIR/nvim-lsp.sh "$@"
